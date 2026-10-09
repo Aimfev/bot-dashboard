@@ -10,14 +10,8 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const FRONTEND = (
-process.env.FRONTEND_ORIGIN ||
-'https://aimfev.github.io'
-).replace(//$/, '');
-
-// GitHub Pages project URL
-const FRONTEND_URL = "${FRONTEND}/bot-dashboard/";
-
+const FRONTEND = (process.env.FRONTEND_ORIGIN || 'https://aimfev.github.io').replace(//$/, '');
+const FRONTEND_URL = FRONTEND + '/bot-dashboard/';
 app.set('trust proxy', 1);
 
 app.use(helmet({
