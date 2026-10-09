@@ -10,8 +10,13 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const FRONTEND = (process.env.FRONTEND_ORIGIN || 'https://aimfev.github.io').replace(//$/, '');
+const FRONTEND = (
+  process.env.FRONTEND_ORIGIN ||
+  'https://aimfev.github.io'
+).replace(/\/$/, '');
+
 const FRONTEND_URL = FRONTEND + '/bot-dashboard/';
+
 app.set('trust proxy', 1);
 
 app.use(helmet({
@@ -34,7 +39,7 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     sameSite: 'none',
     maxAge: 7 * 24 * 60 * 60 * 1000
   }
@@ -109,7 +114,9 @@ CREATE TABLE IF NOT EXISTS server_logs (
 
 async function db(sql, args = []) {
   if (!pool) {
-    throw new Error('Database is not configured. Set DATABASE_URL in the backend environment.');
+    throw new Error(
+      'Database is not configured. Set DATABASE_URL in the backend environment.'
+    );
   }
 
   return pool.query(sql, args);
@@ -157,6 +164,7 @@ function canManage(req, guildId) {
   }
 }
 
+// Health check
 app.get('/health', (req, res) => {
   res.json({
     ok: true,
@@ -166,6 +174,7 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Discord OAuth URL
 app.get('/auth/discord/url', (req, res) => {
   if (
     !process.env.DISCORD_CLIENT_ID ||
@@ -183,9 +192,12 @@ app.get('/auth/discord/url', (req, res) => {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', 'identify guilds');
 
-  res.json({ url: url.toString() });
+  res.json({
+    url: url.toString()
+  });
 });
 
+// Discord OAuth callback
 app.get('/auth/discord/callback', async (req, res) => {
   try {
     const code = req.query.code;
@@ -244,14 +256,18 @@ app.get('/auth/discord/callback', async (req, res) => {
     ]);
 
     if (!userRes.ok || !guildRes.ok) {
-      throw new Error('Could not retrieve Discord account or server information.');
+      throw new Error(
+        'Could not retrieve Discord account or server information.'
+      );
     }
 
     const user = await userRes.json();
     const allGuilds = await guildRes.json();
 
     if (!user.id || !Array.isArray(allGuilds)) {
-      throw new Error('Invalid Discord account or server response.');
+      throw new Error(
+        'Invalid Discord account or server response.'
+      );
     }
 
     req.session.user = {
@@ -286,7 +302,6 @@ app.get('/auth/discord/callback', async (req, res) => {
         );
       }
 
-      // Return to the actual GitHub Pages project URL.
       res.redirect(FRONTEND_URL);
     });
   } catch (error) {
@@ -298,6 +313,7 @@ app.get('/auth/discord/callback', async (req, res) => {
   }
 });
 
+// Current user
 app.get('/api/me', requireAuth, (req, res) => {
   res.json({
     user: req.session.user,
@@ -305,6 +321,7 @@ app.get('/api/me', requireAuth, (req, res) => {
   });
 });
 
+// Logout
 app.post('/api/logout', requireAuth, (req, res) => {
   req.session.destroy(error => {
     if (error) {
@@ -313,11 +330,19 @@ app.post('/api/logout', requireAuth, (req, res) => {
       });
     }
 
-    res.clearCookie('ducky.sid');
-    res.json({ ok: true });
+    res.clearCookie('ducky.sid', {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none'
+    });
+
+    res.json({
+      ok: true
+    });
   });
 });
 
+// Read module settings
 app.get('/api/modules/:module', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.query.guildId || '');
@@ -344,6 +369,7 @@ app.get('/api/modules/:module', requireAuth, async (req, res) => {
   }
 });
 
+// Save module settings
 app.put('/api/modules/:module', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.body.guildId || '');
@@ -379,6 +405,7 @@ app.put('/api/modules/:module', requireAuth, async (req, res) => {
   }
 });
 
+// Save module configuration
 app.put('/api/modules/:module/config', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.body.guildId || '');
@@ -413,6 +440,7 @@ app.put('/api/modules/:module/config', requireAuth, async (req, res) => {
   }
 });
 
+// Moderation history
 app.get('/api/moderation', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.query.guildId || '');
@@ -437,7 +465,9 @@ app.get('/api/moderation', requireAuth, async (req, res) => {
       [guildId]
     );
 
-    res.json({ cases: result.rows });
+    res.json({
+      cases: result.rows
+    });
   } catch (error) {
     res.status(500).json({
       error: error.message
@@ -445,6 +475,7 @@ app.get('/api/moderation', requireAuth, async (req, res) => {
   }
 });
 
+// Perform moderation action
 app.post('/api/moderation', requireAuth, async (req, res) => {
   try {
     const {
@@ -565,6 +596,7 @@ app.post('/api/moderation', requireAuth, async (req, res) => {
   }
 });
 
+// Server logs
 app.get('/api/logs', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.query.guildId || '');
@@ -586,7 +618,9 @@ app.get('/api/logs', requireAuth, async (req, res) => {
       [guildId]
     );
 
-    res.json({ logs: result.rows });
+    res.json({
+      logs: result.rows
+    });
   } catch (error) {
     res.status(500).json({
       error: error.message
@@ -594,6 +628,7 @@ app.get('/api/logs', requireAuth, async (req, res) => {
   }
 });
 
+// General error handler
 app.use((err, req, res, next) => {
   console.error(err);
 
@@ -602,6 +637,7 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Start backend
 app.listen(PORT, () => {
   console.log(`DUCKY backend listening on ${PORT}`);
 });
