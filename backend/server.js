@@ -16,7 +16,7 @@ process.env.FRONTEND_ORIGIN ||
 ).replace(//$/, '');
 
 // GitHub Pages project URL
-const FRONTEND_URL = `${FRONTEND}/bot-dashboard/`;
+const FRONTEND_URL = "${FRONTEND}/bot-dashboard/";
 
 app.set('trust proxy', 1);
 
