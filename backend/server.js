@@ -5,7 +5,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const session = require('express-session');
 const { Pool } = require('pg');
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, PermissionsBitField } = require('discord.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,7 +34,7 @@ app.use(express.json({
 
 app.use(session({
   name: 'ducky.sid',
-  secret: process.env.SESSION_SECRET || 'dev-only-change-this-secret',
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -61,9 +61,7 @@ if (process.env.DISCORD_BOT_TOKEN) {
   bot = new Client({
     intents: [
       GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent
+      GatewayIntentBits.GuildMembers
     ]
   });
 
@@ -76,10 +74,9 @@ if (process.env.DISCORD_BOT_TOKEN) {
     console.error('Discord bot error:', error.message);
   });
 
-  bot.login(process.env.DISCORD_BOT_TOKEN)
-    .catch(error => {
-      console.error('Bot login failed:', error.message);
-    });
+  bot.login(process.env.DISCORD_BOT_TOKEN).catch(error => {
+    console.error('Bot login failed:', error.message);
+  });
 } else {
   console.warn('DISCORD_BOT_TOKEN is not configured.');
 }
@@ -114,9 +111,7 @@ CREATE TABLE IF NOT EXISTS server_logs (
 
 async function db(sql, args = []) {
   if (!pool) {
-    throw new Error(
-      'Database is not configured. Set DATABASE_URL in the backend environment.'
-    );
+    throw new Error('Database is not configured.');
   }
 
   return pool.query(sql, args);
@@ -148,23 +143,65 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function canManage(req, guildId) {
+function hasManagePermission(guild) {
   try {
-    return (req.session.guilds || []).some(guild =>
-      guild.id === String(guildId) &&
-      (
-        guild.owner ||
-        (
-          (BigInt(guild.permissions || '0') & BigInt(0x20)) === BigInt(0x20)
-        )
-      )
-    );
+    const permissions = BigInt(guild.permissions || '0');
+
+    return Boolean(guild.owner) ||
+      (permissions & BigInt(PermissionsBitField.Flags.Administrator)) !== 0n ||
+      (permissions & BigInt(PermissionsBitField.Flags.ManageGuild)) !== 0n;
   } catch {
     return false;
   }
 }
 
-// Health check
+function canManage(req, guildId) {
+  if (!guildId || !/^\d{17,20}$/.test(String(guildId))) {
+    return false;
+  }
+
+  return (req.session.guilds || []).some(guild =>
+    guild.id === String(guildId) &&
+    hasManagePermission(guild)
+  );
+}
+
+async function getBotGuild(guildId) {
+  if (!bot || !botReady) {
+    return null;
+  }
+
+  return bot.guilds.cache.get(String(guildId)) || null;
+}
+
+async function requireManagedBotGuild(req, res, guildId) {
+  if (!canManage(req, guildId)) {
+    res.status(403).json({
+      error: 'You need Manage Server permission for this server.'
+    });
+    return null;
+  }
+
+  if (!botReady) {
+    res.status(503).json({
+      error: 'The Discord bot is not online.'
+    });
+    return null;
+  }
+
+  const guild = await getBotGuild(guildId);
+
+  if (!guild) {
+    res.status(404).json({
+      error: 'Your bot is not installed in this server.'
+    });
+    return null;
+  }
+
+  return guild;
+}
+
+// Health
 app.get('/health', (req, res) => {
   res.json({
     ok: true,
@@ -174,14 +211,14 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Discord OAuth URL
+// OAuth URL
 app.get('/auth/discord/url', (req, res) => {
   if (
     !process.env.DISCORD_CLIENT_ID ||
     !process.env.DISCORD_REDIRECT_URI
   ) {
     return res.status(503).json({
-      error: 'Set DISCORD_CLIENT_ID and DISCORD_REDIRECT_URI in backend environment.'
+      error: 'Discord OAuth environment variables are missing.'
     });
   }
 
@@ -197,7 +234,7 @@ app.get('/auth/discord/url', (req, res) => {
   });
 });
 
-// Discord OAuth callback
+// OAuth callback
 app.get('/auth/discord/callback', async (req, res) => {
   try {
     const code = req.query.code;
@@ -206,44 +243,31 @@ app.get('/auth/discord/callback', async (req, res) => {
       return res.redirect(`${FRONTEND_URL}?login=cancelled`);
     }
 
-    const tokenRes = await fetch(
-      'https://discord.com/api/oauth2/token',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-          client_id: process.env.DISCORD_CLIENT_ID || '',
-          client_secret: process.env.DISCORD_CLIENT_SECRET || '',
-          grant_type: 'authorization_code',
-          code,
-          redirect_uri: process.env.DISCORD_REDIRECT_URI || ''
-        })
-      }
-    );
+    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: new URLSearchParams({
+        client_id: process.env.DISCORD_CLIENT_ID || '',
+        client_secret: process.env.DISCORD_CLIENT_SECRET || '',
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: process.env.DISCORD_REDIRECT_URI || ''
+      })
+    });
 
     const token = await tokenRes.json();
 
     if (!tokenRes.ok || !token.access_token) {
-      console.error(
-        'OAuth token exchange failed:',
-        tokenRes.status,
-        token.error || 'unknown error',
-        token.error_description || ''
-      );
-
       if (tokenRes.status === 429) {
         return res.status(429).send(
-          'Discord is temporarily rate-limiting login attempts. Please wait before trying again.'
+          'Discord is rate-limiting logins. Wait before trying again.'
         );
       }
 
-      throw new Error(
-        token.error_description ||
-        token.error ||
-        'OAuth token exchange failed'
-      );
+      console.error('OAuth exchange failed:', token.error || tokenRes.status);
+      throw new Error('Discord authentication failed.');
     }
 
     const headers = {
@@ -256,18 +280,14 @@ app.get('/auth/discord/callback', async (req, res) => {
     ]);
 
     if (!userRes.ok || !guildRes.ok) {
-      throw new Error(
-        'Could not retrieve Discord account or server information.'
-      );
+      throw new Error('Could not retrieve your Discord account or servers.');
     }
 
     const user = await userRes.json();
     const allGuilds = await guildRes.json();
 
     if (!user.id || !Array.isArray(allGuilds)) {
-      throw new Error(
-        'Invalid Discord account or server response.'
-      );
+      throw new Error('Invalid Discord response.');
     }
 
     req.session.user = {
@@ -278,13 +298,9 @@ app.get('/auth/discord/callback', async (req, res) => {
         : null
     };
 
+    // Only servers the user owns or can manage.
     req.session.guilds = allGuilds
-      .filter(guild =>
-        guild.owner ||
-        (
-          (BigInt(guild.permissions || '0') & BigInt(0x20)) === BigInt(0x20)
-        )
-      )
+      .filter(hasManagePermission)
       .map(guild => ({
         id: guild.id,
         name: guild.name,
@@ -296,29 +312,54 @@ app.get('/auth/discord/callback', async (req, res) => {
     req.session.save(error => {
       if (error) {
         console.error('Session save failed:', error.message);
-
-        return res.status(500).send(
-          'Could not save Discord login session.'
-        );
+        return res.status(500).send('Could not save your login session.');
       }
 
       res.redirect(FRONTEND_URL);
     });
   } catch (error) {
     console.error('OAuth callback:', error.message);
-
     res.status(500).send(
-      'Discord login failed. Return to the dashboard and check the backend environment settings.'
+      'Discord login failed. Check the backend environment settings.'
     );
   }
 });
 
-// Current user
-app.get('/api/me', requireAuth, (req, res) => {
-  res.json({
-    user: req.session.user,
-    guilds: req.session.guilds || []
-  });
+// Current user and dynamically detected bot servers
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    const manageableGuilds = req.session.guilds || [];
+
+    const guilds = manageableGuilds.map(guild => {
+      const botGuild = botReady
+        ? bot.guilds.cache.get(guild.id)
+        : null;
+
+      return {
+        id: guild.id,
+        name: guild.name,
+        owner: guild.owner,
+        icon: guild.icon,
+        botInstalled: Boolean(botGuild),
+        botReady,
+        canManage: true
+      };
+    });
+
+    res.set('Cache-Control', 'no-store');
+
+    res.json({
+      user: req.session.user,
+      guilds,
+      botReady
+    });
+  } catch (error) {
+    console.error('/api/me failed:', error.message);
+
+    res.status(500).json({
+      error: 'Could not load your Discord servers.'
+    });
+  }
 });
 
 // Logout
@@ -336,9 +377,7 @@ app.post('/api/logout', requireAuth, (req, res) => {
       sameSite: 'none'
     });
 
-    res.json({
-      ok: true
-    });
+    res.json({ ok: true });
   });
 });
 
@@ -347,11 +386,8 @@ app.get('/api/modules/:module', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.query.guildId || '');
 
-    if (!canManage(req, guildId)) {
-      return res.status(403).json({
-        error: 'You need Manage Server permission for this server.'
-      });
-    }
+    const guild = await requireManagedBotGuild(req, res, guildId);
+    if (!guild) return;
 
     const result = await db(
       'SELECT config, updated_at FROM dashboard_settings WHERE guild_id=$1 AND module=$2',
@@ -363,9 +399,7 @@ app.get('/api/modules/:module', requireAuth, async (req, res) => {
       updatedAt: result.rows[0]?.updated_at || null
     });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -374,11 +408,8 @@ app.put('/api/modules/:module', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.body.guildId || '');
 
-    if (!canManage(req, guildId)) {
-      return res.status(403).json({
-        error: 'You need Manage Server permission for this server.'
-      });
-    }
+    const guild = await requireManagedBotGuild(req, res, guildId);
+    if (!guild) return;
 
     const config = {
       features: Array.isArray(req.body.features)
@@ -399,9 +430,7 @@ app.put('/api/modules/:module', requireAuth, async (req, res) => {
       message: 'Saved module configuration.'
     });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -410,11 +439,8 @@ app.put('/api/modules/:module/config', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.body.guildId || '');
 
-    if (!canManage(req, guildId)) {
-      return res.status(403).json({
-        error: 'You need Manage Server permission for this server.'
-      });
-    }
+    const guild = await requireManagedBotGuild(req, res, guildId);
+    if (!guild) return;
 
     const config = {
       channelId: String(req.body.channelId || ''),
@@ -434,9 +460,7 @@ app.put('/api/modules/:module/config', requireAuth, async (req, res) => {
       message: 'Saved configuration.'
     });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -445,11 +469,8 @@ app.get('/api/moderation', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.query.guildId || '');
 
-    if (!canManage(req, guildId)) {
-      return res.status(403).json({
-        error: 'You need Manage Server permission.'
-      });
-    }
+    const guild = await requireManagedBotGuild(req, res, guildId);
+    if (!guild) return;
 
     const result = await db(
       `SELECT id,
@@ -465,13 +486,9 @@ app.get('/api/moderation', requireAuth, async (req, res) => {
       [guildId]
     );
 
-    res.json({
-      cases: result.rows
-    });
+    res.json({ cases: result.rows });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -486,35 +503,18 @@ app.post('/api/moderation', requireAuth, async (req, res) => {
       durationMinutes
     } = req.body;
 
-    if (!canManage(req, guildId)) {
-      return res.status(403).json({
-        error: 'You need Manage Server permission.'
-      });
-    }
+    const guild = await requireManagedBotGuild(req, res, guildId);
+    if (!guild) return;
 
     if (!['warn', 'timeout', 'kick', 'ban'].includes(action)) {
-      return res.status(400).json({
-        error: 'Unsupported action.'
-      });
+      return res.status(400).json({ error: 'Unsupported action.' });
     }
 
     if (!/^\d{17,20}$/.test(String(targetId || ''))) {
-      return res.status(400).json({
-        error: 'Enter a valid Discord user ID.'
-      });
+      return res.status(400).json({ error: 'Enter a valid Discord user ID.' });
     }
 
-    if (!bot || !botReady) {
-      return res.status(503).json({
-        error: 'The Discord bot is not online. Configure DISCORD_BOT_TOKEN.'
-      });
-    }
-
-    const guild = await bot.guilds.fetch(String(guildId));
-
-    const member = await guild.members
-      .fetch(String(targetId))
-      .catch(() => null);
+    const member = await guild.members.fetch(String(targetId)).catch(() => null);
 
     if (action !== 'ban' && !member) {
       return res.status(404).json({
@@ -525,24 +525,20 @@ app.post('/api/moderation', requireAuth, async (req, res) => {
     const why = String(reason || 'No reason provided').slice(0, 500);
 
     if (action === 'warn') {
-      // Records a warning without sending a DM.
+      // Record the warning without sending a DM.
     } else if (action === 'timeout') {
       if (!member.moderatable) {
         return res.status(403).json({
-          error: 'Bot cannot timeout this member. Check permissions and role hierarchy.'
+          error: 'Bot cannot timeout this member. Check role hierarchy and permissions.'
         });
       }
 
-      const mins = Math.max(
-        1,
-        Math.min(40320, Number(durationMinutes) || 10)
-      );
-
+      const mins = Math.max(1, Math.min(40320, Number(durationMinutes) || 10));
       await member.timeout(mins * 60000, why);
     } else if (action === 'kick') {
       if (!member.kickable) {
         return res.status(403).json({
-          error: 'Bot cannot kick this member. Check permissions and role hierarchy.'
+          error: 'Bot cannot kick this member. Check role hierarchy and permissions.'
         });
       }
 
@@ -550,35 +546,23 @@ app.post('/api/moderation', requireAuth, async (req, res) => {
     } else if (action === 'ban') {
       if (member && !member.bannable) {
         return res.status(403).json({
-          error: 'Bot cannot ban this member. Check permissions and role hierarchy.'
+          error: 'Bot cannot ban this member. Check role hierarchy and permissions.'
         });
       }
 
-      await guild.members.ban(String(targetId), {
-        reason: why
-      });
+      await guild.members.ban(String(targetId), { reason: why });
     }
 
     await db(
       `INSERT INTO moderation_cases
        (guild_id, actor_id, target_id, action, reason)
        VALUES ($1, $2, $3, $4, $5)`,
-      [
-        String(guildId),
-        req.session.user.id,
-        String(targetId),
-        action,
-        why
-      ]
+      [String(guildId), req.session.user.id, String(targetId), action, why]
     );
 
     await db(
       'INSERT INTO server_logs (guild_id, type, message) VALUES ($1, $2, $3)',
-      [
-        String(guildId),
-        'moderation',
-        `${action} ${targetId}: ${why}`
-      ]
+      [String(guildId), 'moderation', `${action} ${targetId}: ${why}`]
     );
 
     res.json({
@@ -589,10 +573,7 @@ app.post('/api/moderation', requireAuth, async (req, res) => {
     });
   } catch (error) {
     console.error('Moderation action failed:', error.message);
-
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -601,11 +582,8 @@ app.get('/api/logs', requireAuth, async (req, res) => {
   try {
     const guildId = String(req.query.guildId || '');
 
-    if (!canManage(req, guildId)) {
-      return res.status(403).json({
-        error: 'You need Manage Server permission.'
-      });
-    }
+    const guild = await requireManagedBotGuild(req, res, guildId);
+    if (!guild) return;
 
     const result = await db(
       `SELECT type,
@@ -618,13 +596,9 @@ app.get('/api/logs', requireAuth, async (req, res) => {
       [guildId]
     );
 
-    res.json({
-      logs: result.rows
-    });
+    res.json({ logs: result.rows });
   } catch (error) {
-    res.status(500).json({
-      error: error.message
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
