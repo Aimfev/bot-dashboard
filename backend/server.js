@@ -59,9 +59,13 @@ console.log(`DUCKY bot online as ${bot.user.tag}`);
 
 bot.on('error',e=>console.error('Discord bot error:',e.message));
 
+
+console.log('Discord token detected:',Boolean(process.env.DISCORD_BOT_TOKEN));
+
 bot.login(process.env.DISCORD_BOT_TOKEN)
+.then(()=>console.log('Discord login request completed'))
 .catch(e=>console.error('Bot login failed:',e.message));
-}
+
 
 const schema=`
 CREATE TABLE IF NOT EXISTS dashboard_settings (
