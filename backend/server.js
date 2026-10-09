@@ -11,9 +11,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const FRONTEND = (
-  process.env.FRONTEND_ORIGIN ||
-  'http://localhost:5500'
-).replace(/\/$/, '');
+process.env.FRONTEND_ORIGIN ||
+'https://aimfev.github.io'
+).replace(//$/, '');
+
+// GitHub Pages project URL
+const FRONTEND_URL = `${FRONTEND}/bot-dashboard/`;
 
 app.set('trust proxy', 1);
 
@@ -74,11 +77,6 @@ if (process.env.DISCORD_BOT_TOKEN) {
     console.error('Discord bot error:', error.message);
   });
 
-  console.log(
-    'Discord token detected:',
-    Boolean(process.env.DISCORD_BOT_TOKEN)
-  );
-
   bot.login(process.env.DISCORD_BOT_TOKEN)
     .catch(error => {
       console.error('Bot login failed:', error.message);
@@ -117,9 +115,7 @@ CREATE TABLE IF NOT EXISTS server_logs (
 
 async function db(sql, args = []) {
   if (!pool) {
-    throw new Error(
-      'Database is not configured. Set DATABASE_URL in the backend environment.'
-    );
+    throw new Error('Database is not configured. Set DATABASE_URL in the backend environment.');
   }
 
   return pool.query(sql, args);
@@ -158,8 +154,7 @@ function canManage(req, guildId) {
       (
         guild.owner ||
         (
-          (BigInt(guild.permissions || '0') & BigInt(0x20)) ===
-          BigInt(0x20)
+          (BigInt(guild.permissions || '0') & BigInt(0x20)) === BigInt(0x20)
         )
       )
     );
@@ -183,7 +178,7 @@ app.get('/auth/discord/url', (req, res) => {
     !process.env.DISCORD_REDIRECT_URI
   ) {
     return res.status(503).json({
-      error: 'Set DISCORD_CLIENT_ID and DISCORD_REDIRECT_URI in the backend environment.'
+      error: 'Set DISCORD_CLIENT_ID and DISCORD_REDIRECT_URI in backend environment.'
     });
   }
 
@@ -194,9 +189,7 @@ app.get('/auth/discord/url', (req, res) => {
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', 'identify guilds');
 
-  res.json({
-    url: url.toString()
-  });
+  res.json({ url: url.toString() });
 });
 
 app.get('/auth/discord/callback', async (req, res) => {
@@ -204,7 +197,7 @@ app.get('/auth/discord/callback', async (req, res) => {
     const code = req.query.code;
 
     if (!code) {
-      return res.redirect(`${FRONTEND}?login=cancelled`);
+      return res.redirect(`${FRONTEND_URL}?login=cancelled`);
     }
 
     const tokenRes = await fetch(
@@ -279,8 +272,7 @@ app.get('/auth/discord/callback', async (req, res) => {
       .filter(guild =>
         guild.owner ||
         (
-          (BigInt(guild.permissions || '0') & BigInt(0x20)) ===
-          BigInt(0x20)
+          (BigInt(guild.permissions || '0') & BigInt(0x20)) === BigInt(0x20)
         )
       )
       .map(guild => ({
@@ -300,7 +292,8 @@ app.get('/auth/discord/callback', async (req, res) => {
         );
       }
 
-      res.redirect(FRONTEND);
+      // Return to the actual GitHub Pages project URL.
+      res.redirect(FRONTEND_URL);
     });
   } catch (error) {
     console.error('OAuth callback:', error.message);
@@ -450,9 +443,7 @@ app.get('/api/moderation', requireAuth, async (req, res) => {
       [guildId]
     );
 
-    res.json({
-      cases: result.rows
-    });
+    res.json({ cases: result.rows });
   } catch (error) {
     res.status(500).json({
       error: error.message
@@ -601,9 +592,7 @@ app.get('/api/logs', requireAuth, async (req, res) => {
       [guildId]
     );
 
-    res.json({
-      logs: result.rows
-    });
+    res.json({ logs: result.rows });
   } catch (error) {
     res.status(500).json({
       error: error.message
