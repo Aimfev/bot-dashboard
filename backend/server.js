@@ -35,8 +35,7 @@ dbReady=true;
 console.log("PostgreSQL connected.");
 }
 async function saveConfig(patch){
-config={...config,...patch};
-config.modules=config.modules||{};
+config={...config,...patch};config.modules=config.modules||{};
 if(pool&&dbReady)await pool.query("INSERT INTO veyron_config(config_key,config_value,updated_at) VALUES($1,$2::jsonb,NOW()) ON CONFLICT(config_key) DO UPDATE SET config_value=EXCLUDED.config_value,updated_at=NOW()",["main",JSON.stringify(config)]);
 return config;
 }
@@ -49,8 +48,7 @@ const b=req.body||{},p={};
 if(b.modules&&typeof b.modules==="object"&&!Array.isArray(b.modules))p.modules=b.modules;
 if(typeof b.bioNote==="string")p.bioNote=b.bioNote.slice(0,500);
 if(typeof b.pronounsNote==="string")p.pronounsNote=b.pronounsNote.slice(0,80);
-await saveConfig(p);
-res.json({ok:true,config,status:statusData()});
+await saveConfig(p);res.json({ok:true,config,status:statusData()});
 }catch(e){console.error("Save config:",e);res.status(500).json({error:"Failed to save configuration."});}
 });
 app.post("/api/status",requireKey,async(req,res)=>{
@@ -64,8 +62,7 @@ const p={presence,activityType:activityType||"Playing",activityText:typeof activ
 if(typeof bioNote==="string")p.bioNote=bioNote.slice(0,500);
 if(typeof pronounsNote==="string")p.pronounsNote=pronounsNote.slice(0,80);
 client.user.setPresence({status:p.presence,activities:p.activityText?[{name:p.activityText,type:activityTypes[p.activityType]}]:[]});
-await saveConfig(p);
-res.json({ok:true,config,status:statusData()});
+await saveConfig(p);res.json({ok:true,config,status:statusData()});
 }catch(e){console.error("Presence update:",e);res.status(500).json({error:"Failed to update presence."});}
 });
 
@@ -102,36 +99,57 @@ return true;
 }
 async function getMember(i,user){return i.guild.members.fetch(user.id).catch(()=>null);}
 
-const aiCooldown=new Map();
+/* FAST GEMINI HANDLER */
+const aiCooldown=new Map(),aiBusy=new Set();
 client.on("messageCreate",async m=>{
 if(m.author.bot||!m.guild||!genAI||!client.user)return;
 const content=m.content.trim();
 if(!content||content.length>2000)return;
-const mentioned=m.mentions.has(client.user);
-const startsWithBot=content.toLowerCase().startsWith("veyron,");
-if(!mentioned&&!startsWithBot)return;
-const now=Date.now(),last=aiCooldown.get(m.author.id)||0;
-if(now-last<5000)return;
+if(!m.mentions.has(client.user)&&!content.toLowerCase().startsWith("veyron,"))return;
+if(aiBusy.has(m.author.id))return;
+const now=Date.now();
+if(now-(aiCooldown.get(m.author.id)||0)<3000)return;
 aiCooldown.set(m.author.id,now);
+aiBusy.add(m.author.id);
+let reply;
 try{
-await m.channel.sendTyping();
 const prompt=content.replace(new RegExp(`<@!?${client.user.id}>`,"g"),"").replace(/^veyron,\s*/i,"").trim();
 if(!prompt)return;
-const response=await genAI.models.generateContent({
+reply=await m.reply({content:"💭 Thinking...",allowedMentions:{repliedUser:false}});
+const controller=new AbortController();
+const timer=setTimeout(()=>controller.abort(),8000);
+try{
+const response=await Promise.race([
+genAI.models.generateContent({
 model:process.env.GEMINI_MODEL||"gemini-3.8-flash",
 contents:prompt,
 config:{
-systemInstruction:"You are VEYRON, a helpful, friendly Discord server AI assistant. Reply naturally and concisely. Follow Discord formatting conventions. Do not claim to have permissions or perform actions you have not performed.",
-maxOutputTokens:500
+systemInstruction:"You are VEYRON, a fast and friendly Discord AI assistant. Reply briefly and directly. Never claim to perform actions you have not performed.",
+maxOutputTokens:200
 }
-});
+}),
+new Promise((_,reject)=>controller.signal.addEventListener("abort",()=>reject(new Error("Gemini timed out after 8 seconds")),{once:true}))
+]);
+clearTimeout(timer);
 const answer=response.text?.trim();
-if(answer)await m.reply({content:answer.slice(0,2000),allowedMentions:{repliedUser:false}});
-else await m.reply("I couldn't generate a response. Please try again.").catch(()=>{});
+await reply.edit({content:answer?answer.slice(0,2000):"I couldn't generate a response. Please try again.",allowedMentions:{repliedUser:false}});
 }catch(e){
+clearTimeout(timer);
 console.error("Gemini reply failed:",e?.message||e);
-await m.reply("AI is temporarily unavailable. Please try again shortly.").catch(()=>{});
+const err=String(e?.message||"");
+const message=/503|UNAVAILABLE|overload|429|RESOURCE_EXHAUSTED/i.test(err)
+?"⚡ Gemini is busy right now. Please try again shortly."
+:/timed out|aborted/i.test(err)
+?"⏱️ Gemini took too long to respond. Please try again."
+:"⚠️ The AI service failed. Please try again shortly.";
+if(reply)await reply.edit({content:message}).catch(()=>{});
+else await m.reply({content:message,allowedMentions:{repliedUser:false}}).catch(()=>{});
 }
+}catch(e){
+console.error("AI handler error:",e?.message||e);
+if(reply)await reply.edit({content:"⚠️ Something went wrong while replying."}).catch(()=>{});
+}catchOuterDummy{}
+finally{aiBusy.delete(m.author.id);}
 });
 
 client.on("interactionCreate",async i=>{
