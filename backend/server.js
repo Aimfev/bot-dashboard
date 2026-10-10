@@ -1,838 +1,278 @@
 
-'use strict';
+require("dotenv").config();
 
-require('dotenv').config();
-
-const express = require('express');
-const path = require('path');
-const cors = require('cors');
-const helmet = require('helmet');
-const session = require('express-session');
-const { Pool } = require('pg');
-const {
-  Client,
-  GatewayIntentBits,
-  PermissionsBitField,
-  SlashCommandBuilder,
-  REST,
-  Routes
-} = require('discord.js');
+const express = require("express");
+const cors = require("cors");
+const crypto = require("crypto");
+const { Client, GatewayIntentBits, ActivityType } = require("discord.js");
+const { Pool } = require("pg");
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+app.disable("x-powered-by");
+app.use(express.json({ limit: "1mb" }));
 
-// VEYRON Control: serve frontend and API from Render.
-const FRONTEND_URL = 'https://bot-dashboard-w9zw.onrender.com/';
-const FRONTEND_ORIGIN = 'https://bot-dashboard-w9zw.onrender.com';
-const FRONTEND_PATH = path.resolve(__dirname, '../frontend');
+const PORT = process.env.PORT || 3000;
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const API_KEY = process.env.DASHBOARD_API_KEY;
+const DATABASE_URL = process.env.DATABASE_URL;
 
-const {
-  SESSION_SECRET,
-  DATABASE_URL,
-  DISCORD_CLIENT_ID,
-  DISCORD_CLIENT_SECRET,
-  DISCORD_BOT_TOKEN,
-  DISCORD_REDIRECT_URI
-} = process.env;
-
-if (!SESSION_SECRET) {
-  console.error('SESSION_SECRET is missing.');
-  process.exit(1);
-}
-
-if (
-  !DISCORD_CLIENT_ID ||
-  !DISCORD_CLIENT_SECRET ||
-  !DISCORD_REDIRECT_URI
-) {
-  console.error('Discord OAuth environment variables are missing.');
-  process.exit(1);
-}
-
-app.set('trust proxy', 1);
-app.disable('x-powered-by');
-
-app.use(helmet({
-  crossOriginResourcePolicy: false,
-  contentSecurityPolicy: false
-}));
+const origins = (
+  process.env.FRONTEND_ORIGINS || "https://aimfev.github.io"
+).split(",").map(value => value.trim());
 
 app.use(cors({
-  origin: FRONTEND_ORIGIN,
-  credentials: true
+  origin(origin, callback) {
+    if (!origin || origins.includes(origin)) return callback(null, true);
+    callback(new Error("Origin not allowed"));
+  },
+  allowedHeaders: ["Content-Type", "x-dashboard-key"],
+  methods: ["GET", "PUT", "POST", "OPTIONS"]
 }));
 
-app.use(express.json({ limit: '100kb' }));
-
-app.use(session({
-  name: 'veyron.sid',
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000
-  }
-}));
-
-// PostgreSQL
 const pool = DATABASE_URL
   ? new Pool({
       connectionString: DATABASE_URL,
-      ssl: DATABASE_URL.includes('localhost')
-        ? false
-        : { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false }
     })
   : null;
 
-const schema = `
-CREATE TABLE IF NOT EXISTS dashboard_settings (
-  guild_id TEXT NOT NULL,
-  module TEXT NOT NULL,
-  config JSONB NOT NULL DEFAULT '{}'::jsonb,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (guild_id, module)
-);
-
-CREATE TABLE IF NOT EXISTS moderation_cases (
-  id BIGSERIAL PRIMARY KEY,
-  guild_id TEXT NOT NULL,
-  actor_id TEXT,
-  target_id TEXT NOT NULL,
-  action TEXT NOT NULL,
-  reason TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS server_logs (
-  id BIGSERIAL PRIMARY KEY,
-  guild_id TEXT NOT NULL,
-  type TEXT NOT NULL,
-  message TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-`;
-
-async function db(sql, args = []) {
-  if (!pool) {
-    throw new Error('DATABASE_URL is not configured.');
-  }
-
-  return pool.query(sql, args);
-}
-
-async function initializeDatabase() {
-  if (!pool) {
-    console.warn('DATABASE_URL is not configured.');
-    return;
-  }
-
-  try {
-    await pool.query(schema);
-    console.log('Database tables checked.');
-  } catch (error) {
-    console.error('Database initialization failed:', error.message);
-  }
-}
-
-// Discord slash commands
-const commands = [
-  new SlashCommandBuilder()
-    .setName('say')
-    .setDescription('Send a message as VEYRON')
-    .addStringOption(option =>
-      option
-        .setName('message')
-        .setDescription('Message to send')
-        .setRequired(true)
-        .setMaxLength(1800)
-    )
-    .setDefaultMemberPermissions(
-      PermissionsBitField.Flags.ManageMessages
-    ),
-
-  new SlashCommandBuilder()
-    .setName('serverinfo')
-    .setDescription('Show information about this server'),
-
-  new SlashCommandBuilder()
-    .setName('userinfo')
-    .setDescription('Show information about a member')
-    .addUserOption(option =>
-      option
-        .setName('user')
-        .setDescription('Member to inspect')
-        .setRequired(false)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('ping')
-    .setDescription('Check VEYRON latency')
-];
-
-const bot = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds]
 });
 
 let botReady = false;
+let dbReady = false;
+let config = {
+  presence: "online",
+  activityType: "Playing",
+  activityText: "VEYRON Control",
+  bioNote: "",
+  pronounsNote: "",
+  modules: {}
+};
 
-bot.once('clientReady', async () => {
-  botReady = true;
-  console.log(`VEYRON online as ${bot.user.tag}`);
+const activityTypes = {
+  Playing: ActivityType.Playing,
+  Listening: ActivityType.Listening,
+  Watching: ActivityType.Watching,
+  Competing: ActivityType.Competing
+};
 
-  try {
-    const rest = new REST({ version: '10' })
-      .setToken(DISCORD_BOT_TOKEN);
-
-    await rest.put(
-      Routes.applicationCommands(DISCORD_CLIENT_ID),
-      {
-        body: commands.map(command => command.toJSON())
-      }
-    );
-
-    console.log('Slash commands registered.');
-  } catch (error) {
-    console.error('Command registration failed:', error.message);
-  }
-});
-
-bot.on('error', error => {
-  console.error('Discord bot error:', error.message);
-});
-
-bot.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  try {
-    if (interaction.commandName === 'ping') {
-      return interaction.reply({
-        content: `Pong! ${Math.round(bot.ws.ping)}ms`,
-        ephemeral: true
-      });
-    }
-
-    if (interaction.commandName === 'say') {
-      if (!interaction.memberPermissions?.has(
-        PermissionsBitField.Flags.ManageMessages
-      )) {
-        return interaction.reply({
-          content: 'You need Manage Messages permission.',
-          ephemeral: true
-        });
-      }
-
-      return interaction.reply({
-        content: interaction.options.getString('message', true),
-        allowedMentions: { parse: [] }
-      });
-    }
-
-    if (interaction.commandName === 'serverinfo') {
-      const guild = interaction.guild;
-      const icon = guild.iconURL();
-
-      return interaction.reply({
-        embeds: [{
-          color: 0x61ed94,
-          title: guild.name,
-          ...(icon ? { thumbnail: { url: icon } } : {}),
-          fields: [
-            {
-              name: 'Server ID',
-              value: guild.id,
-              inline: true
-            },
-            {
-              name: 'Members',
-              value: String(guild.memberCount),
-              inline: true
-            },
-            {
-              name: 'Created',
-              value: `<t:${Math.floor(guild.createdTimestamp / 1000)}:D>`,
-              inline: true
-            }
-          ]
-        }],
-        ephemeral: true
-      });
-    }
-
-    if (interaction.commandName === 'userinfo') {
-      const user =
-        interaction.options.getUser('user') || interaction.user;
-
-      return interaction.reply({
-        embeds: [{
-          color: 0x61ed94,
-          title: user.tag || user.username,
-          thumbnail: { url: user.displayAvatarURL() },
-          fields: [
-            {
-              name: 'User ID',
-              value: user.id,
-              inline: true
-            },
-            {
-              name: 'Created',
-              value: `<t:${Math.floor(user.createdTimestamp / 1000)}:D>`,
-              inline: true
-            }
-          ]
-        }],
-        ephemeral: true
-      });
-    }
-  } catch (error) {
-    console.error('Command failed:', error.message);
-
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        content: 'Command failed. Check bot permissions.',
-        ephemeral: true
-      }).catch(() => {});
-    }
-  }
-});
-
-if (DISCORD_BOT_TOKEN) {
-  bot.login(DISCORD_BOT_TOKEN).catch(error => {
-    console.error('Bot login failed:', error.message);
-  });
-} else {
-  console.warn('DISCORD_BOT_TOKEN is not configured.');
-}
-
-// Authentication helpers
-function requireAuth(req, res, next) {
-  if (!req.session.user) {
-    return res.status(401).json({
-      error: 'Connect Discord first.'
+function requireKey(req, res, next) {
+  if (!API_KEY) {
+    return res.status(503).json({
+      error: "DASHBOARD_API_KEY is missing in Render."
     });
+  }
+
+  const supplied = req.get("x-dashboard-key") || "";
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(API_KEY);
+
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ error: "Invalid dashboard API key." });
   }
 
   next();
 }
 
-function hasManagePermission(guild) {
-  try {
-    const permissions = BigInt(guild.permissions || '0');
+function statusData() {
+  const ping = client.ws?.ping;
 
-    return Boolean(guild.owner) ||
-      (permissions & BigInt(
-        PermissionsBitField.Flags.Administrator
-      )) !== 0n ||
-      (permissions & BigInt(
-        PermissionsBitField.Flags.ManageGuild
-      )) !== 0n;
-  } catch {
-    return false;
-  }
+  return {
+    bot: {
+      ready: botReady && Boolean(client.user),
+      username: client.user?.username || null,
+      guilds: client.guilds.cache.size,
+      ping: Number.isFinite(ping) && ping >= 0 ? ping : null
+    },
+    database: { connected: dbReady }
+  };
 }
 
-function canManage(req, id) {
-  return /^\d{17,20}$/.test(String(id || '')) &&
-    (req.session.guilds || []).some(guild =>
-      guild.id === String(id) && hasManagePermission(guild)
+async function initializeDatabase() {
+  if (!pool) {
+    console.warn("DATABASE_URL missing; configuration will be memory-only.");
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS veyron_config (
+      config_key TEXT PRIMARY KEY,
+      config_value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  const result = await pool.query(
+    "SELECT config_value FROM veyron_config WHERE config_key = $1",
+    ["main"]
+  );
+
+  if (result.rows[0]) {
+    config = { ...config, ...result.rows[0].config_value };
+    config.modules = config.modules || {};
+  } else {
+    await pool.query(
+      "INSERT INTO veyron_config(config_key, config_value) VALUES($1,$2::jsonb)",
+      ["main", JSON.stringify(config)]
     );
+  }
+
+  dbReady = true;
+  console.log("Supabase PostgreSQL connected.");
 }
 
-async function requireGuild(req, res, id) {
-  if (!canManage(req, id)) {
-    res.status(403).json({
-      error: 'You need Manage Server permission for this server.'
-    });
-    return null;
+async function saveConfig(patch) {
+  config = { ...config, ...patch };
+  config.modules = config.modules || {};
+
+  if (pool && dbReady) {
+    await pool.query(
+      `INSERT INTO veyron_config(config_key, config_value, updated_at)
+       VALUES($1,$2::jsonb,NOW())
+       ON CONFLICT(config_key)
+       DO UPDATE SET config_value=EXCLUDED.config_value,
+                     updated_at=NOW()`,
+      ["main", JSON.stringify(config)]
+    );
   }
 
-  if (!botReady) {
-    res.status(503).json({
-      error: 'VEYRON bot is not online.'
-    });
-    return null;
-  }
-
-  const guild = bot.guilds.cache.get(String(id));
-
-  if (!guild) {
-    res.status(404).json({
-      error: 'VEYRON is not installed in this server.'
-    });
-    return null;
-  }
-
-  return guild;
+  return config;
 }
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({
-    ok: true,
-    botReady,
-    dbConfigured: Boolean(pool),
-    service: 'VEYRON Control'
-  });
+app.get("/", (_req, res) => {
+  res.json({ name: "VEYRON Control API", ok: true });
 });
 
-// Discord OAuth login URL
-app.get('/auth/discord/url', (req, res) => {
-  const url = new URL('https://discord.com/oauth2/authorize');
-
-  url.searchParams.set('client_id', DISCORD_CLIENT_ID);
-  url.searchParams.set('redirect_uri', DISCORD_REDIRECT_URI);
-  url.searchParams.set('response_type', 'code');
-  url.searchParams.set('scope', 'identify guilds');
-
-  res.set('Cache-Control', 'no-store');
-  res.json({ url: url.toString() });
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, status: statusData() });
 });
 
-// Discord OAuth callback
-app.get('/auth/discord/callback', async (req, res) => {
+app.get("/api/config", requireKey, (_req, res) => {
+  res.json({ config, status: statusData() });
+});
+
+app.put("/api/config", requireKey, async (req, res) => {
   try {
-    const code = req.query.code;
+    const body = req.body || {};
+    const patch = {};
 
-    if (!code) {
-      return res.redirect(`${FRONTEND_URL}?login=cancelled`);
+    if (body.modules && typeof body.modules === "object" &&
+        !Array.isArray(body.modules)) {
+      patch.modules = body.modules;
     }
 
-    const tokenResponse = await fetch(
-      'https://discord.com/api/oauth2/token',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: new URLSearchParams({
-          client_id: DISCORD_CLIENT_ID,
-          client_secret: DISCORD_CLIENT_SECRET,
-          grant_type: 'authorization_code',
-          code: String(code),
-          redirect_uri: DISCORD_REDIRECT_URI
-        })
-      }
-    );
+    if (typeof body.bioNote === "string") patch.bioNote = body.bioNote.slice(0, 500);
+    if (typeof body.pronounsNote === "string") patch.pronounsNote = body.pronounsNote.slice(0, 80);
 
-    const token = await tokenResponse.json();
-
-    if (!tokenResponse.ok || !token.access_token) {
-      console.error(
-        'OAuth exchange failed:',
-        token.error || tokenResponse.status
-      );
-
-      return res.status(502).send(
-        'Discord login failed. Check your OAuth settings.'
-      );
-    }
-
-    const headers = {
-      Authorization: `Bearer ${token.access_token}`
-    };
-
-    const [userResponse, guildResponse] = await Promise.all([
-      fetch('https://discord.com/api/users/@me', { headers }),
-      fetch('https://discord.com/api/users/@me/guilds', { headers })
-    ]);
-
-    if (!userResponse.ok || !guildResponse.ok) {
-      throw new Error('Failed to fetch Discord profile or servers.');
-    }
-
-    const user = await userResponse.json();
-    const guilds = await guildResponse.json();
-
-    const sessionUser = {
-      id: user.id,
-      username: user.global_name || user.username,
-      avatar: user.avatar
-        ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`
-        : null
-    };
-
-    const manageableGuilds = guilds
-      .filter(hasManagePermission)
-      .map(guild => ({
-        id: guild.id,
-        name: guild.name,
-        owner: guild.owner,
-        permissions: guild.permissions,
-        icon: guild.icon
-      }));
-
-    // Regenerate session after successful OAuth to reduce fixation risk.
-    req.session.regenerate(error => {
-      if (error) {
-        console.error('Session regeneration failed:', error.message);
-        return res.status(500).send('Could not create login session.');
-      }
-
-      req.session.user = sessionUser;
-      req.session.guilds = manageableGuilds;
-
-      req.session.save(saveError => {
-        if (saveError) {
-          console.error('Session save failed:', saveError.message);
-          return res.status(500).send('Could not save login session.');
-        }
-
-        res.redirect(FRONTEND_URL);
-      });
-    });
+    await saveConfig(patch);
+    res.json({ ok: true, config, status: statusData() });
   } catch (error) {
-    console.error('OAuth callback failed:', error.message);
-    res.status(500).send(
-      'Discord login failed. Check the Render logs and OAuth settings.'
-    );
+    console.error("Save configuration failed:", error);
+    res.status(500).json({ error: "Failed to save configuration." });
   }
 });
 
-// Current user and manageable Discord servers
-app.get('/api/me', requireAuth, (req, res) => {
-  const guilds = (req.session.guilds || []).map(guild => ({
-    id: guild.id,
-    name: guild.name,
-    owner: guild.owner,
-    icon: guild.icon,
-    botInstalled: bot.guilds.cache.has(guild.id),
-    botReady,
-    canManage: true
-  }));
-
-  res.set('Cache-Control', 'no-store');
-
-  res.json({
-    user: req.session.user,
-    guilds,
-    botReady
-  });
-});
-
-// Logout
-app.post('/api/logout', (req, res) => {
-  req.session.destroy(error => {
-    if (error) {
-      return res.status(500).json({
-        error: 'Could not log out.'
-      });
-    }
-
-    res.clearCookie('veyron.sid', {
-      httpOnly: true,
-      secure: true,
-      sameSite: 'lax'
-    });
-
-    res.json({ ok: true });
-  });
-});
-
-// Read module settings
-app.get('/api/modules/:module', requireAuth, async (req, res) => {
-  try {
-    const id = String(req.query.guildId || '');
-
-    if (!await requireGuild(req, res, id)) return;
-
-    const result = await db(
-      `SELECT config, updated_at
-       FROM dashboard_settings
-       WHERE guild_id=$1 AND module=$2`,
-      [id, req.params.module]
-    );
-
-    res.json({
-      config: result.rows[0]?.config || {},
-      updatedAt: result.rows[0]?.updated_at || null
-    });
-  } catch (error) {
-    console.error('Read module failed:', error.message);
-    res.status(500).json({
-      error: 'Could not read module settings.'
-    });
-  }
-});
-
-// Save module settings
-app.put('/api/modules/:module', requireAuth, async (req, res) => {
-  try {
-    const id = String(req.body.guildId || '');
-
-    if (!await requireGuild(req, res, id)) return;
-
-    const config = {
-      features: Array.isArray(req.body.features)
-        ? req.body.features
-        : [],
-      enabled: Boolean(req.body.enabled)
-    };
-
-    await db(
-      `INSERT INTO dashboard_settings(guild_id,module,config)
-       VALUES($1,$2,$3)
-       ON CONFLICT(guild_id,module)
-       DO UPDATE SET
-         config=EXCLUDED.config,
-         updated_at=NOW()`,
-      [id, req.params.module, JSON.stringify(config)]
-    );
-
-    res.json({
-      ok: true,
-      message: 'Module settings saved.'
-    });
-  } catch (error) {
-    console.error('Save module failed:', error.message);
-    res.status(500).json({
-      error: 'Could not save module settings.'
-    });
-  }
-});
-
-// Save module configuration
-app.put('/api/modules/:module/config', requireAuth, async (req, res) => {
-  try {
-    const id = String(req.body.guildId || '');
-
-    if (!await requireGuild(req, res, id)) return;
-
-    const config = {
-      channelId: String(req.body.channelId || ''),
-      details: String(req.body.details || '').slice(0, 4000)
-    };
-
-    await db(
-      `INSERT INTO dashboard_settings(guild_id,module,config)
-       VALUES($1,$2,$3)
-       ON CONFLICT(guild_id,module)
-       DO UPDATE SET
-         config=EXCLUDED.config,
-         updated_at=NOW()`,
-      [id, req.params.module, JSON.stringify(config)]
-    );
-
-    res.json({
-      ok: true,
-      message: 'Configuration saved.'
-    });
-  } catch (error) {
-    console.error('Save config failed:', error.message);
-    res.status(500).json({
-      error: 'Could not save configuration.'
-    });
-  }
-});
-
-// Moderation history
-app.get('/api/moderation', requireAuth, async (req, res) => {
-  try {
-    const id = String(req.query.guildId || '');
-
-    if (!await requireGuild(req, res, id)) return;
-
-    const result = await db(
-      `SELECT id,
-              actor_id AS "actorId",
-              target_id AS "targetId",
-              action,
-              reason,
-              created_at AS "createdAt"
-       FROM moderation_cases
-       WHERE guild_id=$1
-       ORDER BY id DESC
-       LIMIT 100`,
-      [id]
-    );
-
-    res.json({ cases: result.rows });
-  } catch (error) {
-    console.error('Moderation history failed:', error.message);
-    res.status(500).json({
-      error: 'Could not load moderation history.'
-    });
-  }
-});
-
-// Perform moderation action
-app.post('/api/moderation', requireAuth, async (req, res) => {
+app.post("/api/status", requireKey, async (req, res) => {
   try {
     const {
-      guildId,
-      action,
-      targetId,
-      reason,
-      durationMinutes
-    } = req.body;
+      presence,
+      activityType,
+      activityText,
+      bioNote,
+      pronounsNote
+    } = req.body || {};
 
-    const guild = await requireGuild(req, res, guildId);
-    if (!guild) return;
+    const allowedPresence = ["online", "idle", "dnd", "invisible"];
 
-    if (!['warn', 'timeout', 'kick', 'ban'].includes(action)) {
-      return res.status(400).json({
-        error: 'Unsupported moderation action.'
+    if (!allowedPresence.includes(presence)) {
+      return res.status(400).json({ error: "Invalid presence." });
+    }
+
+    if (activityType && !Object.hasOwn(activityTypes, activityType)) {
+      return res.status(400).json({ error: "Invalid activity type." });
+    }
+
+    if (typeof activityText === "string" && activityText.length > 128) {
+      return res.status(400).json({ error: "Activity text is too long." });
+    }
+
+    if (!botReady || !client.user) {
+      return res.status(503).json({
+        error: "The VEYRON bot is not connected to Discord."
       });
     }
 
-    if (!/^\d{17,20}$/.test(String(targetId || ''))) {
-      return res.status(400).json({
-        error: 'Enter a valid Discord user ID.'
-      });
-    }
+    const patch = {
+      presence,
+      activityType: activityType || "Playing",
+      activityText: typeof activityText === "string" ? activityText : ""
+    };
 
-    const why = String(reason || 'No reason provided').slice(0, 500);
+    if (typeof bioNote === "string") patch.bioNote = bioNote.slice(0, 500);
+    if (typeof pronounsNote === "string") patch.pronounsNote = pronounsNote.slice(0, 80);
 
-    const member = await guild.members
-      .fetch(String(targetId))
-      .catch(() => null);
+    const type = activityTypes[patch.activityType];
 
-    if (action !== 'ban' && !member) {
-      return res.status(404).json({
-        error: 'Member not found in this server.'
-      });
-    }
-
-    if (action === 'warn') {
-      // Warning is recorded in the database.
-    }
-
-    if (action === 'timeout') {
-      if (!member.moderatable) {
-        return res.status(403).json({
-          error: 'Bot cannot timeout this member. Check role hierarchy.'
-        });
-      }
-
-      const minutes = Math.max(
-        1,
-        Math.min(40320, Number(durationMinutes) || 10)
-      );
-
-      await member.timeout(minutes * 60000, why);
-    }
-
-    if (action === 'kick') {
-      if (!member.kickable) {
-        return res.status(403).json({
-          error: 'Bot cannot kick this member. Check role hierarchy.'
-        });
-      }
-
-      await member.kick(why);
-    }
-
-    if (action === 'ban') {
-      if (member && !member.bannable) {
-        return res.status(403).json({
-          error: 'Bot cannot ban this member. Check role hierarchy.'
-        });
-      }
-
-      await guild.members.ban(String(targetId), { reason: why });
-    }
-
-    await db(
-      `INSERT INTO moderation_cases
-       (guild_id,actor_id,target_id,action,reason)
-       VALUES($1,$2,$3,$4,$5)`,
-      [
-        String(guildId),
-        req.session.user.id,
-        String(targetId),
-        action,
-        why
-      ]
-    );
-
-    await db(
-      `INSERT INTO server_logs(guild_id,type,message)
-       VALUES($1,$2,$3)`,
-      [
-        String(guildId),
-        'moderation',
-        `${action} ${targetId}: ${why}`
-      ]
-    );
-
-    res.json({
-      ok: true,
-      message: action === 'warn'
-        ? 'Warning recorded (no DM sent).'
-        : `${action} action completed.`
+    client.user.setPresence({
+      status: patch.presence,
+      activities: patch.activityText
+        ? [{ name: patch.activityText, type }]
+        : []
     });
+
+    await saveConfig(patch);
+    res.json({ ok: true, config, status: statusData() });
   } catch (error) {
-    console.error('Moderation failed:', error.message);
-    res.status(500).json({
-      error: 'Moderation action failed.'
-    });
+    console.error("Presence update failed:", error);
+    res.status(500).json({ error: "Failed to update presence." });
   }
 });
 
-// Dashboard server logs
-app.get('/api/logs', requireAuth, async (req, res) => {
-  try {
-    const id = String(req.query.guildId || '');
+client.once("ready", () => {
+  botReady = true;
+  console.log(`Connected as ${client.user.tag}`);
 
-    if (!await requireGuild(req, res, id)) return;
+  const type = activityTypes[config.activityType] ?? ActivityType.Playing;
 
-    const result = await db(
-      `SELECT type,
-              message,
-              created_at AS "createdAt"
-       FROM server_logs
-       WHERE guild_id=$1
-       ORDER BY id DESC
-       LIMIT 100`,
-      [id]
-    );
-
-    res.json({ logs: result.rows });
-  } catch (error) {
-    console.error('Load logs failed:', error.message);
-    res.status(500).json({
-      error: 'Could not load server logs.'
-    });
-  }
+  client.user.setPresence({
+    status: config.presence || "online",
+    activities: config.activityText
+      ? [{ name: config.activityText, type }]
+      : []
+  });
 });
 
-// Serve the frontend AFTER the API routes.
-app.use(express.static(FRONTEND_PATH, {
-  index: 'index.html',
-  etag: true,
-  maxAge: 0
-}));
-
-app.get('/', (req, res) => {
-  res.sendFile(path.join(FRONTEND_PATH, 'index.html'));
-});
-
-// Unknown routes
-app.use((req, res) => {
-  if (req.path.startsWith('/api/') ||
-      req.path.startsWith('/auth/')) {
-    return res.status(404).json({
-      error: 'Endpoint not found.'
-    });
-  }
-
-  res.status(404).send('Page not found.');
-});
+client.on("error", error => console.error("Discord client error:", error));
+client.on("shardDisconnect", () => { botReady = false; });
+client.on("shardReady", () => { botReady = true; });
 
 async function start() {
-  await initializeDatabase();
+  try {
+    await initializeDatabase();
+  } catch (error) {
+    dbReady = false;
+    console.error("Database connection failed:", error.message);
+  }
+
+  if (!BOT_TOKEN) {
+    console.error("BOT_TOKEN is missing from Render environment variables.");
+  } else {
+    client.login(BOT_TOKEN).catch(error => {
+      console.error("Discord login failed:", error.message);
+    });
+  }
 
   app.listen(PORT, () => {
-    console.log(`VEYRON Control listening on port ${PORT}`);
-    console.log(`Frontend directory: ${FRONTEND_PATH}`);
+    console.log(`VEYRON Control API listening on ${PORT}`);
   });
 }
 
-start().catch(error => {
-  console.error('Startup failed:', error.message);
-  process.exit(1);
+process.on("SIGTERM", async () => {
+  try { await client.destroy(); } catch {}
+  try { if (pool) await pool.end(); } catch {}
+  process.exit(0);
 });
+
+start();
