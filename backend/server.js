@@ -17,7 +17,7 @@ const API_KEY = process.env.DASHBOARD_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 const origins = (
-  process.env.FRONTEND_ORIGINS || "https://aimfev.github.io"
+  process.env.FRONTEND_ORIGINS || "https://dashboard.pntr.dev"
 ).split(",").map(value => value.trim());
 
 app.use(cors({
