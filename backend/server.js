@@ -1,10 +1,12 @@
+
 require("dotenv").config();
-const express=require("express"),cors=require("cors"),crypto=require("crypto"),OpenAI=require("openai");
+const express=require("express"),cors=require("cors"),crypto=require("crypto");
+const{GoogleGenAI}=require("@google/genai");
 const{Client,GatewayIntentBits,ActivityType,SlashCommandBuilder,REST,Routes,PermissionFlagsBits,EmbedBuilder,ChannelType}=require("discord.js");
 const{Pool}=require("pg");
 const app=express();app.disable("x-powered-by");app.use(express.json({limit:"1mb"}));
 const PORT=process.env.PORT||3000,BOT_TOKEN=process.env.BOT_TOKEN,API_KEY=process.env.DASHBOARD_API_KEY,DATABASE_URL=process.env.DATABASE_URL;
-const openai=process.env.OPENAI_API_KEY?new OpenAI({apiKey:process.env.OPENAI_API_KEY}):null;
+const genAI=process.env.GEMINI_API_KEY?new GoogleGenAI({apiKey:process.env.GEMINI_API_KEY}):null;
 const origins=(process.env.FRONTEND_ORIGINS||"https://dashboard.pntr.dev").split(",").map(v=>v.trim());
 app.use(cors({origin(origin,cb){if(!origin||origins.includes(origin))return cb(null,true);cb(new Error("Origin not allowed"));},allowedHeaders:["Content-Type","x-dashboard-key"],methods:["GET","PUT","POST","OPTIONS"]}));
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false}}):null;
@@ -13,7 +15,7 @@ let botReady=false,dbReady=false;
 let config={presence:"online",activityType:"Playing",activityText:"VEYRON Control",bioNote:"",pronounsNote:"",modules:{}};
 const activityTypes={Playing:ActivityType.Playing,Listening:ActivityType.Listening,Watching:ActivityType.Watching,Competing:ActivityType.Competing};
 function requireKey(req,res,next){if(!API_KEY)return res.status(503).json({error:"DASHBOARD_API_KEY is missing in Render."});const a=Buffer.from(req.get("x-dashboard-key")||""),b=Buffer.from(API_KEY);if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return res.status(401).json({error:"Invalid dashboard API key."});next();}
-function statusData(){const ping=client.ws?.ping;return{bot:{ready:botReady&&Boolean(client.user),username:client.user?.username||null,guilds:client.guilds.cache.size,ping:Number.isFinite(ping)&&ping>=0?ping:null},database:{connected:dbReady},ai:{configured:Boolean(openai)}};}
+function statusData(){const ping=client.ws?.ping;return{bot:{ready:botReady&&Boolean(client.user),username:client.user?.username||null,guilds:client.guilds.cache.size,ping:Number.isFinite(ping)&&ping>=0?ping:null},database:{connected:dbReady},ai:{configured:Boolean(genAI)}};}
 async function initializeDatabase(){if(!pool){console.warn("DATABASE_URL missing; configuration will be memory-only.");return;}await pool.query("CREATE TABLE IF NOT EXISTS veyron_config (config_key TEXT PRIMARY KEY,config_value JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");const r=await pool.query("SELECT config_value FROM veyron_config WHERE config_key=$1",["main"]);if(r.rows[0]){config={...config,...r.rows[0].config_value};config.modules=config.modules||{};}else await pool.query("INSERT INTO veyron_config(config_key,config_value) VALUES($1,$2::jsonb)",["main",JSON.stringify(config)]);dbReady=true;console.log("PostgreSQL connected.");}
 async function saveConfig(patch){config={...config,...patch};config.modules=config.modules||{};if(pool&&dbReady)await pool.query("INSERT INTO veyron_config(config_key,config_value,updated_at) VALUES($1,$2::jsonb,NOW()) ON CONFLICT(config_key) DO UPDATE SET config_value=EXCLUDED.config_value,updated_at=NOW()",["main",JSON.stringify(config)]);return config;}
 app.get("/",(_req,res)=>res.json({name:"VEYRON Control API",ok:true}));
@@ -48,7 +50,7 @@ async function getMember(i,user){return i.guild.members.fetch(user.id).catch(()=
 
 const aiCooldown=new Map();
 client.on("messageCreate",async m=>{
-if(m.author.bot||!m.guild||!openai)return;
+if(m.author.bot||!m.guild||!genAI)return;
 const content=m.content.trim();
 if(!content||content.length>2000)return;
 const mentioned=m.mentions.has(client.user);
@@ -61,10 +63,21 @@ try{
 await m.channel.sendTyping();
 const prompt=content.replace(new RegExp(`<@!?${client.user.id}>`,"g"),"").replace(/^veyron,\s*/i,"").trim();
 if(!prompt)return;
-const response=await openai.chat.completions.create({model:process.env.OPENAI_MODEL||"gpt-4.1-mini",messages:[{role:"system",content:"You are VEYRON, a helpful, friendly Discord server AI assistant. Reply naturally and concisely. Follow Discord formatting conventions. Do not claim to have permissions or perform actions you have not performed."},{role:"user",content:prompt}],max_tokens:500});
-const answer=response.choices?.[0]?.message?.content?.trim();
+const response=await genAI.models.generateContent({
+model:process.env.GEMINI_MODEL||"gemini-2.5-flash",
+contents:prompt,
+config:{
+systemInstruction:"You are VEYRON, a helpful, friendly Discord server AI assistant. Reply naturally and concisely. Follow Discord formatting conventions. Do not claim to have permissions or perform actions you have not performed.",
+maxOutputTokens:500
+}
+});
+const answer=response.text?.trim();
 if(answer)await m.reply({content:answer.slice(0,2000),allowedMentions:{repliedUser:false}});
-}catch(e){console.error("OpenAI reply failed:",e.message);if(e.status===429)await m.reply("AI is temporarily busy. Please try again shortly.").catch(()=>{});}
+else await m.reply("I couldn't generate a response. Please try again.").catch(()=>{});
+}catch(e){
+console.error("Gemini reply failed:",e.message);
+await m.reply("AI is temporarily unavailable. Please try again shortly.").catch(()=>{});
+}
 });
 
 client.on("interactionCreate",async i=>{
