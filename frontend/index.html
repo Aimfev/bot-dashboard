@@ -1,46 +1,52 @@
-<!DOCTYPE html><html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#07130c">
-  <title>VEYRON Control</title>
-  <link rel="stylesheet" href="./style.css?v=999">
-  <style>
-    #navigation,.sidebar-bottom{display:none!important}
-  </style>
-</head>
-<body>
-  <div class="layout">
-    <aside class="sidebar" id="sidebar">
-      <div class="brand">
-        <div class="logo">V</div>
-        <div>
-          <strong>VEYRON</strong>
-          <small>CONTROL PANEL</small>
-        </div>
-      </div>
-      <div class="bot-card">
-        <div class="avatar">V</div>
-        <div class="bot-info">
-          <strong>VEYRON Bot</strong>
-          <small id="connection">Connecting...</small>
-        </div>
-        <span id="statusDot" class="dot"></span>
-      </div>
-    </aside>
-    <main class="main">
-      <header class="topbar">
-        <div>
-          <small class="eyebrow">BOT MANAGEMENT</small>
-          <h1 id="pageTitle">Bot Status</h1>
-        </div>
-        <button id="refreshButton" class="secondary">↻ Refresh</button>
-      </header>
-      <div id="notice" class="notice hidden"></div>
-      <section id="content"></section>
-      <footer>VEYRON Control · Keep your bot token private.</footer>
-    </main>
-  </div>
-  <script src="./app.js?v=999"></script>
-</body>
-</html>
+<!DOCTYPE html>  <html lang="en">  
+<head>  
+  <meta charset="UTF-8">  
+  <meta name="viewport" content="width=device-width, initial-scale=1">  
+  <meta name="theme-color" content="#07130c">  
+  <title>VEYRON Control</title>  
+  <link rel="stylesheet" href="./style.css">  
+</head>  
+<body>  
+  <div class="layout">  
+    <aside class="sidebar" id="sidebar">  
+      <div class="brand">  
+        <div class="logo">V</div>  
+        <div>  
+          <strong>VEYRON</strong>  
+          <small>CONTROL PANEL</small>  
+        </div>  
+      </div>  <div class="bot-card">  
+    <div class="avatar">V</div>  
+    <div class="bot-info">  
+      <strong>VEYRON Bot</strong>  
+      <small id="connection">Connecting...</small>  
+    </div>  
+    <span id="statusDot" class="dot"></span>  
+  </div>  
+
+  <nav id="navigation"></nav>  
+
+  <div class="sidebar-bottom">  
+    <button data-page="API & Access">⌘ API & Access</button>  
+    <button data-page="Bot Settings">⚙ Bot Settings</button>  
+  </div>  
+</aside>  
+
+<main class="main">  
+  <header class="topbar">  
+    <button id="menuButton" class="menu-button">☰</button>  
+    <div>  
+      <small class="eyebrow">BOT MANAGEMENT</small>  
+      <h1 id="pageTitle">Overview</h1>  
+    </div>  
+    <button id="refreshButton" class="secondary">↻ Refresh</button>  
+  </header>  
+
+  <div id="notice" class="notice hidden"></div>  
+  <section id="content"></section>  
+
+  <footer>VEYRON Control · Keep your bot token private.</footer>  
+</main>
+
+  </div>    <script src="./app.js"></script>  </body>  
+</html>  
