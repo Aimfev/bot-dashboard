@@ -93,7 +93,7 @@ function can(i,permission){
 if(!i.memberPermissions?.has(permission)){i.reply({content:"❌ You don't have permission to use this command.",ephemeral:true}).catch(()=>{});return false;}
 return true;
 }
-async function getMember(i,user){return i.guild?.members.fetch(user.id).catch(()=>null)||null;}
+async function getMember(i,user){return i.guild?i.guild.members.fetch(user.id).catch(()=>null):null;}
 const aiCooldown=new Map(),aiBusy=new Set();
 client.on("messageCreate",async m=>{
 if(m.author.bot||!m.guild||!OLLAMA_API_KEY||!client.user)return;
