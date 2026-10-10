@@ -1,37 +1,391 @@
 
-const API = '';
-const state={page:'overview',user:null,guilds:[],guildId:'',botReady:false,modules:{},moderation:[],logs:[],commands:[]};
-const pages={overview:['Overview','Manage VEYRON from one place.'],commands:['Slash Commands','Create command drafts.'],automations:['Automations','Plan automated workflows.'],modules:['Module Library','Manage bot modules.'],moderation:['Moderation','Manage moderation cases.'],welcome:['Welcome & Roles','Configure welcome messages.'],tickets:['Tickets','Manage support settings.'],leveling:['Leveling & Economy','Configure XP settings.'],logs:['Logs & Analytics','Review recent activity.'],premium:['VEYRON Premium','Explore premium features.'],settings:['Settings','Manage your connection.']};
-const moduleDefs=[['welcome','✦','Welcome & Goodbye','Greet new members.','Free'],['autorole','♙','Auto Roles','Assign roles automatically.','Free'],['automod','🛡','Auto Moderation','Configure spam protection.','Free'],['logging','≋','Server Logging','Track server events.','Free'],['tickets','▤','Ticket System','Configure support tickets.','Premium'],['leveling','↗','Leveling System','Configure XP and rewards.','Free'],['reactionroles','☷','Reaction Roles','Let members choose roles.','Premium'],['giveaways','🎁','Giveaways','Manage giveaway settings.','Free'],['suggestions','✎','Suggestions','Collect community ideas.','Free'],['customcommands','⌘','Custom Commands','Plan custom commands.','Premium'],['embeds','▣','Embed Builder','Create rich messages.','Free'],['integrations','◎','Integrations','Configure notifications.','Premium']];
-function esc(s=''){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function toast(s){const t=document.getElementById('toast');if(!t){alert(s);return;}t.textContent=s;t.style.display='block';clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.style.display='none',3000);}
-function selectedGuild(){return state.guilds.find(g=>g.id===state.guildId);}
-async function api(path,opts={}){const r=await fetch(API+path,{...opts,credentials:'include',headers:{...(opts.body?{'Content-Type':'application/json'}:{}),...(opts.headers||{})}});let d={};try{d=await r.json();}catch{}if(!r.ok)throw Error(d.error||'Request failed ('+r.status+')');return d;}
-function go(p){if(!pages[p])return;state.page=p;document.querySelectorAll('[data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===p));const crumb=document.getElementById('crumb');if(crumb)crumb.textContent=pages[p][0];document.getElementById('sidebar')?.classList.remove('open');render();}
-document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.page)));
-const menuBtn=document.getElementById('menuBtn');if(menuBtn)menuBtn.onclick=()=>document.getElementById('sidebar')?.classList.toggle('open');
-const serverSelect=document.getElementById('serverSelect');if(serverSelect)serverSelect.onchange=e=>{state.guildId=e.target.value;render();};
-const connectBtn=document.getElementById('connectBtn');if(connectBtn)connectBtn.onclick=async()=>{try{const d=await api('/auth/discord/url');location.href=d.url;}catch(e){toast(e.message);}};
-function card(title,body,extra=''){return `<section class="card"><div class="cardhead"><h3>${title}</h3>${extra}</div>${body}</section>`;}
-function stat(label,value,foot){return `<section class="card"><div class="statlabel">${label}</div><div class="statnum">${value}</div><div class="statfoot">${foot}</div></section>`;}
-function featureCard(m){const enabled=Boolean(state.modules[m[0]]?.enabled);return `<section class="card feature"><div class="featuretop"><div class="featureicon">${m[1]}</div><span class="pill ${m[4]==='Premium'?'premium':''}">${m[4]}</span></div><h3>${m[2]}</h3><p>${m[3]}</p><button class="${enabled?'enabled':''}" onclick="toggleModule('${m[0]}',${!enabled})">${enabled?'✓ Enabled':'Save module preference'}</button></section>`;}
-function render(){const c=document.getElementById('content');if(!c)return;const g=selectedGuild(),name=g?.name||'No server selected',p=state.page,head=`<div class="pagehead"><div><div class="eyebrow">VEYRON CONTROL CENTER</div><h1>${esc(pages[p][0])}</h1><p>${esc(pages[p][1])}</p></div><span class="status"><span class="dot"></span>${state.botReady?'Bot online':'Bot status unavailable'}</span></div>`;
-if(p==='overview'){c.innerHTML=head+`<div class="grid stats">${stat('Selected server',g?'Connected':'—',esc(name))}${stat('Manageable servers',state.guilds.length,'Servers with bot access')}${stat('Bot status',state.botReady?'Online':'Offline','Backend status')}${stat('Module preferences',Object.keys(state.modules).length,'Loaded this session')}</div><div class="grid overviewgrid">${card('Activity overview',`<p class="muted small">Analytics preview</p><div class="activity">${[34,48,40,68,53,77,60,92,70,84,56,73].map((h,i)=>`<div class="barwrap"><div class="bar ${i%3===0?'alt':''}" style="height:${h}%"></div></div>`).join('')}</div>`)}${card('Quick actions',`<div class="quickgrid"><button class="quick" onclick="go('commands')">⌘ Commands</button><button class="quick" onclick="go('moderation')">🛡 Moderation</button><button class="quick" onclick="go('modules')">▦ Modules</button><button class="quick" onclick="go('logs')">≋ Logs</button></div>`)}</div><div style="height:15px"></div>${card('Popular modules',`<div class="grid featuregrid">${moduleDefs.slice(0,6).map(featureCard).join('')}</div>')}`;}
-else if(p==='modules'){c.innerHTML=head+`<div class="notice">Saving a preference does not activate bot functionality unless its event handler exists.</div><div class="grid featuregrid">${moduleDefs.map(featureCard).join('')}</div>`;}
-else if(p==='commands'){c.innerHTML=head+`<div class="notice">Command drafts are kept in this page session. Registering real slash commands requires a bot interaction handler.</div><div class="grid overviewgrid">${card('Create command',`<form id="commandForm" class="formgrid"><div class="field"><label>Command name</label><input id="cmdName" required pattern="[a-z0-9_-]{1,32}" placeholder="say"></div><div class="field"><label>Category</label><select id="cmdCategory"><option>Utility</option><option>Moderation</option><option>Community</option><option>Admin</option></select></div><div class="field full"><label>Description</label><input id="cmdDescription" maxlength="100" placeholder="Command description"></div><div class="field full"><label>Response</label><textarea id="cmdResponse" placeholder="Hello, {user}!"></textarea></div><div class="field full"><label>Permission</label><select id="cmdPermission"><option>Everyone</option><option>Manage Server</option><option>Administrator</option></select></div><div class="field full"><button class="primary" type="submit">Save draft</button></div></form>`)}${card('Command drafts','<div id="commandList" class="empty">No drafts saved.</div>')}</div>`;document.getElementById('commandForm').onsubmit=e=>{e.preventDefault();state.commands.push({name:document.getElementById('cmdName').value,category:document.getElementById('cmdCategory').value,description:document.getElementById('cmdDescription').value,response:document.getElementById('cmdResponse').value,permission:document.getElementById('cmdPermission').value});document.getElementById('commandList').innerHTML=state.commands.map(x=>`<div class="card"><b>/${esc(x.name)}</b><p>${esc(x.description)}</p><small>Draft only · ${esc(x.permission)}</small></div>`).join('');e.target.reset();toast('Command draft saved for this session.');};}
-else if(p==='automations'){c.innerHTML=head+`<div class="notice">Automation controls are a preview and do not execute events yet.</div><div class="grid overviewgrid">${card('Automation recipe',`<div class="formgrid"><div class="field"><label>Trigger</label><select><option>Member joins</option><option>Member leaves</option><option>Keyword detected</option><option>Reaction added</option></select></div><div class="field"><label>Action</label><select><option>Send channel message</option><option>Assign role</option><option>Send direct message</option><option>Log event</option></select></div><div class="field full"><label>Channel or role ID</label><input placeholder="Discord ID"></div><div class="field full"><label>Message</label><textarea placeholder="Welcome {user} to {server}!"></textarea></div><button class="primary" onclick="toast('Automation draft UI is ready for backend implementation.')">Save draft</button></div>`)}${card('Planned features','<p class="muted">Conditions · variables · cooldowns · retries · audit trail</p>')}</div>`;}
-else if(p==='moderation'){c.innerHTML=head+`<div class="grid overviewgrid">${card('Moderation action',`<form id="modForm" class="formgrid"><div class="field"><label>Action</label><select id="modAction"><option value="warn">Warn</option><option value="timeout">Timeout</option><option value="kick">Kick</option><option value="ban">Ban</option></select></div><div class="field"><label>Target user ID</label><input id="modTarget" required inputmode="numeric" pattern="[0-9]{17,20}" placeholder="Discord user ID"></div><div class="field full"><label>Reason</label><input id="modReason" maxlength="500" placeholder="Reason"></div><div class="field" id="durationField"><label>Timeout minutes</label><input id="modDuration" type="number" min="1" max="40320" value="10"></div><div class="field full"><button class="primary" type="submit">Execute action</button></div></form><p class="muted small">Requires correct bot permissions and role hierarchy.</p>`)}${card('Recent cases','<div id="caseList" class="empty">Loading cases…</div>')}</div>`;document.getElementById('modAction').onchange=e=>document.getElementById('durationField').style.display=e.target.value==='timeout'?'grid':'none';document.getElementById('modForm').onsubmit=async e=>{e.preventDefault();if(!state.guildId)return toast('Select a server first.');try{const d=await api('/api/moderation',{method:'POST',body:JSON.stringify({guildId:state.guildId,action:document.getElementById('modAction').value,targetId:document.getElementById('modTarget').value,reason:document.getElementById('modReason').value,durationMinutes:Number(document.getElementById('modDuration').value)})});toast(d.message||'Moderation action completed.');loadCases();}catch(err){toast(err.message);}};loadCases();}
-else if(p==='logs'){c.innerHTML=head+card('Recent server logs','<div id="logsList" class="empty">Loading logs…</div>','<button class="ghostbtn" onclick="loadLogs()">Refresh</button>');loadLogs();}
-else if(p==='premium'){c.innerHTML=head+`<div class="premiumhero"><span class="pill premium">PREMIUM-STYLE FEATURES</span><h2>Make VEYRON yours.</h2><p>Plan advanced analytics, custom branding, expanded logs and more automation slots. Billing is not connected.</p><button class="primary" onclick="toast('Premium checkout is not connected yet.')">Premium setup coming soon</button></div><div class="grid plans">${[['FREE','Starter','$0','Core moderation','Basic welcome and logs'],['PLUS','Plus','Premium','Advanced embeds','Expanded analytics'],['PRO','Ultimate','Premium+','Custom branding','Advanced audit tools']].map(x=>`<section class="card plan"><span class="pill">${x[0]}</span><h3>${x[1]}</h3><div class="price">${x[2]}</div><ul><li>${x[3]}</li><li>${x[4]}</li></ul><button class="ghostbtn" onclick="toast('Billing is not connected.')">Plan details</button></section>`).join('')}</div>`;}
-else if(p==='welcome'){c.innerHTML=head+`<div class="notice">Welcome messages require a matching bot event handler.</div>${card('Welcome message',`<form id="welcomeForm" class="formgrid"><div class="field"><label>Channel ID</label><input id="welcomeChannel" placeholder="Discord channel ID"></div><div class="field"><label>Status</label><select id="welcomeEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></div><div class="field full"><label>Message</label><textarea id="welcomeMessage" placeholder="Welcome {user} to {server}!"></textarea></div><div class="field full"><button class="primary" type="submit">Save settings</button></div></form>`)}`;document.getElementById('welcomeForm').onsubmit=async e=>{e.preventDefault();await saveConfig('welcome',{channelId:document.getElementById('welcomeChannel').value,details:JSON.stringify({enabled:document.getElementById('welcomeEnabled').value==='true',message:document.getElementById('welcomeMessage').value})});};}
-else if(p==='tickets'||p==='leveling'){const items=p==='tickets'?[['Ticket panel','Create support panels.'],['Routing','Route tickets to staff.'],['Transcripts','Export conversations.']]:[['XP rules','Configure XP and cooldowns.'],['Role rewards','Assign milestone roles.'],['Leaderboard','Show member rankings.']];c.innerHTML=head+`<div class="notice">This layout is staged until database settings and bot handlers are implemented.</div><div class="grid featuregrid">${items.map((x,i)=>`<section class="card feature"><div class="featureicon">${['✦','⚙','≋'][i]}</div><h3>${x[0]}</h3><p>${x[1]}</p><button onclick="toast('This module is staged for implementation.')">Configure</button></section>`).join('')}</div>`;}
-else if(p==='settings'){c.innerHTML=head+`<div class="grid overviewgrid">${card('Connection settings',`<p class="muted">Dashboard origin</p><p><code>${esc(location.origin)}</code></p><p class="muted">Render backend</p><p><code>${esc(API)}</code></p><div class="actions"><button class="ghostbtn" onclick="checkConnection()">Test backend</button><button class="ghostbtn" onclick="logout()">Disconnect Discord</button></div>`)}${card('Server access',`<p class="muted">Manage Server permission and bot installation are required.</p><p>Selected server: <b>${esc(name)}</b></p><p>Bot installed: <b>${g?.botInstalled?'Yes':'Not detected'}</b></p><p>Bot status: <b>${state.botReady?'Ready':'Not ready'}</b></p>`)}</div>`;}}
-async function toggleModule(key,enabled){if(!state.guildId)return toast('Select a server first.');try{await api('/api/modules/'+encodeURIComponent(key),{method:'PUT',body:JSON.stringify({guildId:state.guildId,features:[],enabled})});state.modules[key]={...(state.modules[key]||{}),enabled};toast('Module preference saved.');render();}catch(e){toast(e.message);}}
-async function saveConfig(key,config){if(!state.guildId)return toast('Select a server first.');try{await api('/api/modules/'+encodeURIComponent(key)+'/config',{method:'PUT',body:JSON.stringify({guildId:state.guildId,channelId:config.channelId||'',details:config.details||''})});toast('Settings saved.');}catch(e){toast(e.message);}}
-async function loadCases(){const el=document.getElementById('caseList');if(!el)return;if(!state.guildId){el.textContent='Select a server first.';return;}try{const d=await api('/api/moderation?guildId='+encodeURIComponent(state.guildId));state.moderation=d.cases||[];el.innerHTML=state.moderation.length?`<div class="tablewrap"><table><thead><tr><th>Action</th><th>Target</th><th>Reason</th><th>Created</th></tr></thead><tbody>${state.moderation.map(x=>`<tr><td>${esc(x.action)}</td><td>${esc(x.targetId)}</td><td>${esc(x.reason||'—')}</td><td>${x.createdAt?new Date(x.createdAt).toLocaleString():'—'}</td></tr>`).join('')}</tbody></table></div>`:'No moderation cases found.';}catch(e){el.textContent=e.message;}}
-async function loadLogs(){const el=document.getElementById('logsList');if(!el)return;if(!state.guildId){el.textContent='Select a server first.';return;}try{const d=await api('/api/logs?guildId='+encodeURIComponent(state.guildId));state.logs=d.logs||[];el.innerHTML=state.logs.length?`<div class="tablewrap"><table><thead><tr><th>Type</th><th>Message</th><th>Time</th></tr></thead><tbody>${state.logs.map(x=>`<tr><td>${esc(x.type)}</td><td>${esc(x.message)}</td><td>${x.createdAt?new Date(x.createdAt).toLocaleString():'—'}</td></tr>`).join('')}</tbody></table></div>`:'No logs found.';}catch(e){el.textContent=e.message;}}
-async function checkConnection(){try{const d=await api('/health');toast('API OK · Bot '+(d.botReady?'online':'offline')+' · DB '+(d.dbConfigured?'configured':'not configured'));}catch(e){toast('Could not reach backend.');}}
-async function logout(){try{await api('/api/logout',{method:'POST'});state.user=null;state.guilds=[];state.guildId='';syncUser();render();toast('Disconnected from Discord.');}catch(e){toast(e.message);}}
-function syncUser(){const chip=document.getElementById('userChip');if(chip)chip.hidden=!state.user;const btn=document.getElementById('connectBtn');if(btn)btn.hidden=Boolean(state.user);const username=document.getElementById('username');if(username)username.textContent=state.user?.username||'Account';const avatar=document.getElementById('avatar');if(avatar)avatar.textContent=(state.user?.username||'V').slice(0,1).toUpperCase();const sel=document.getElementById('serverSelect');if(!sel)return;sel.innerHTML=state.guilds.length?state.guilds.map(g=>`<option value="${esc(g.id)}">${esc(g.name)}</option>`).join(''):'<option value="">No manageable servers</option>';if(state.guildId&&state.guilds.some(g=>g.id===state.guildId))sel.value=state.guildId;else state.guildId=sel.value||'';}
-async function boot(){const params=new URLSearchParams(location.search);if(params.has('login')){history.replaceState({},'',location.pathname);if(params.get('login')==='cancelled')toast('Discord login cancelled.');}try{const d=await api('/api/me');state.user=d.user;state.guilds=(d.guilds||[]).filter(g=>g.botInstalled);state.botReady=Boolean(d.botReady);syncUser();const bs=document.getElementById('botState');if(bs)bs.textContent=state.botReady?'Bot online':'Bot offline';if(!state.guilds.length)toast('No manageable server with VEYRON installed was found.');}catch(e){state.guilds=[];state.botReady=false;syncUser();const bs=document.getElementById('botState');if(bs)bs.textContent='Not connected';}render();}
-boot();
+const API = "https://bot-dashboard-w9zw.onrender.com";
+const KEY_NAME = "veyron_dashboard_api_key";
+
+let apiKey = localStorage.getItem(KEY_NAME) || "";
+let currentPage = "Overview & Bot Status";
+let config = {
+  presence: "online",
+  activityType: "Playing",
+  activityText: "VEYRON Control",
+  bioNote: "",
+  pronounsNote: "",
+  modules: {}
+};
+
+let runtime = {};
+
+const groups = {
+  "CORE MODULES": [
+    "Overview & Bot Status", "Welcomer", "Goodbye Messages",
+    "Boost Messages", "Auto Roles", "Reaction Roles",
+    "Moderation", "AutoMod & Anti-Spam", "Warnings & Cases",
+    "Logging", "Tickets", "Suggestions"
+  ],
+  "COMMANDS & BUILDERS": [
+    "Slash Commands", "Custom Commands", "Command Builder",
+    "Event Builder", "Message Builder", "Embeds & Components",
+    "Scheduled Tasks", "Autoresponder", "Variables & Conditions",
+    "Custom Events"
+  ],
+  "COMMUNITY MODULES": [
+    "Leveling & XP", "Rank Cards", "Leaderboards", "Economy",
+    "Giveaways", "Polls", "Starboard", "Counting",
+    "Invites & Tracking", "Birthdays", "Reminders", "Sticky Messages"
+  ],
+  "SERVER TOOLS": [
+    "Server Statistics", "Member Counter", "Reaction Management",
+    "Temporary Voice Channels", "Role Management", "Channel Management",
+    "Mass Actions", "Utility Commands", "Information Commands",
+    "Verification"
+  ],
+  "ADVANCED & SETTINGS": [
+    "AI Integrations", "API Requests", "Data Storage",
+    "Custom Status", "Activity & Analytics", "Audit Logs",
+    "Error Logs", "Permissions & Access", "Bot Settings",
+    "Premium-Style Features"
+  ]
+};
+
+const $ = selector => document.querySelector(selector);
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;",
+    '"': "&quot;", "'": "&#39;"
+  })[char]);
+}
+
+function notify(message, error = false) {
+  const box = $("#notice");
+  box.textContent = message;
+  box.classList.remove("hidden");
+  box.style.borderColor = error ? "#a34747" : "";
+  box.style.color = error ? "#ffbaba" : "";
+  setTimeout(() => box.classList.add("hidden"), 5000);
+}
+
+async function request(path, options = {}) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(options.headers || {})
+  };
+
+  if (apiKey) headers["x-dashboard-key"] = apiKey;
+
+  const response = await fetch(API + path, {
+    ...options,
+    headers
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (response.status === 401) {
+    apiKey = prompt("Enter your Render DASHBOARD_API_KEY") || "";
+    if (!apiKey) throw new Error("Dashboard API key required.");
+    localStorage.setItem(KEY_NAME, apiKey);
+    return request(path, options);
+  }
+
+  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+function renderNavigation() {
+  const nav = $("#navigation");
+
+  nav.innerHTML = Object.entries(groups).map(([heading, items]) => `
+    <div class="nav-group">
+      <div class="nav-heading">${escapeHTML(heading)}</div>
+      ${items.map(item => `
+        <button class="nav-item ${item === currentPage ? "active" : ""}"
+                data-page="${escapeHTML(item)}">
+          ${escapeHTML(item)}
+        </button>
+      `).join("")}
+    </div>
+  `).join("");
+
+  document.querySelectorAll("[data-page]").forEach(button => {
+    button.onclick = () => navigate(button.dataset.page);
+  });
+}
+
+function navigate(page) {
+  currentPage = page;
+  $("#pageTitle").textContent = page;
+  $("#sidebar").classList.remove("open");
+  renderNavigation();
+  renderPage();
+}
+
+function updateConnection() {
+  const ready = Boolean(runtime.bot?.ready);
+  $("#connection").textContent = ready ? "Bot connected" : "Bot not connected";
+  $("#statusDot").className = `dot ${ready ? "online" : "offline"}`;
+}
+
+async function loadConfig() {
+  try {
+    const result = await request("/api/config");
+    config = { ...config, ...(result.config || {}) };
+    config.modules = config.modules || {};
+    runtime = result.status || {};
+    updateConnection();
+    renderPage();
+  } catch (error) {
+    $("#connection").textContent = "Connection error";
+    $("#statusDot").className = "dot offline";
+    notify(error.message, true);
+  }
+}
+
+async function saveConfig(patch) {
+  try {
+    const result = await request("/api/config", {
+      method: "PUT",
+      body: JSON.stringify(patch)
+    });
+
+    config = { ...config, ...(result.config || {}) };
+    notify("Configuration saved.");
+    renderPage();
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+function statusPage() {
+  const bot = runtime.bot || {};
+  const db = runtime.database || {};
+
+  return `
+    <div class="grid four">
+      <div class="card">
+        <div class="stat-label">Discord bot</div>
+        <div class="stat-value">${bot.ready ? "Online" : "Offline"}</div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Gateway latency</div>
+        <div class="stat-value">${Number.isFinite(bot.ping) ? Math.round(bot.ping) + " ms" : "—"}</div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Servers</div>
+        <div class="stat-value">${bot.guilds ?? "—"}</div>
+      </div>
+      <div class="card">
+        <div class="stat-label">Database</div>
+        <div class="stat-value">${db.connected ? "Ready" : "Unknown"}</div>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <h2>Bot Presence</h2>
+      <p>Change the live presence of your existing VEYRON bot.</p>
+    </div>
+
+    <form id="statusForm" class="grid two">
+      <div class="card">
+        <h2>Presence and activity</h2>
+
+        <div class="field">
+          <label for="presence">Online status</label>
+          <select id="presence">
+            ${[
+              ["online", "🟢 Online"],
+              ["idle", "🌙 Idle"],
+              ["dnd", "⛔ Do Not Disturb"],
+              ["invisible", "⚫ Invisible"]
+            ].map(([value, label]) => `
+              <option value="${value}" ${config.presence === value ? "selected" : ""}>
+                ${label}
+              </option>
+            `).join("")}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="activityType">Activity type</label>
+          <select id="activityType">
+            ${["Playing", "Watching", "Listening", "Competing"].map(value => `
+              <option ${config.activityType === value ? "selected" : ""}>${value}</option>
+            `).join("")}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="activityText">Activity text</label>
+          <input id="activityText" maxlength="128"
+                 value="${escapeHTML(config.activityText)}">
+        </div>
+
+        <div class="form-actions">
+          <button class="primary" type="submit">Save & Apply Status</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Bio and pronouns</h2>
+        <p class="muted">
+          Discord's supported bot API cannot edit the bot's About Me or pronouns.
+          These values are saved as dashboard-only notes.
+        </p>
+
+        <div class="field">
+          <label for="bioNote">Bio note</label>
+          <textarea id="bioNote" maxlength="500">${escapeHTML(config.bioNote)}</textarea>
+        </div>
+
+        <div class="field">
+          <label for="pronounsNote">Pronouns note</label>
+          <input id="pronounsNote" maxlength="80"
+                 value="${escapeHTML(config.pronounsNote)}">
+        </div>
+
+        <div class="form-actions">
+          <button class="secondary" type="button" id="saveNotes">
+            Save dashboard notes
+          </button>
+        </div>
+      </div>
+    </form>
+  `;
+}
+
+function renderPage() {
+  const content = $("#content");
+
+  if (currentPage === "Overview" ||
+      currentPage === "Overview & Bot Status") {
+    content.innerHTML = statusPage();
+    attachStatusEvents();
+    return;
+  }
+
+  if (currentPage === "API & Access" ||
+      currentPage === "Permissions & Access") {
+    content.innerHTML = `
+      <div class="card">
+        <h2>API & Access</h2>
+        <p class="muted">Existing Render API connection.</p>
+        <div class="field">
+          <label>Backend URL</label>
+          <input readonly value="${API}">
+        </div>
+        <button class="secondary" id="changeKey">Change dashboard API key</button>
+        <p class="muted">Never place your bot token in frontend files.</p>
+      </div>
+    `;
+
+    $("#changeKey").onclick = () => {
+      const value = prompt("Enter DASHBOARD_API_KEY");
+      if (value) {
+        apiKey = value;
+        localStorage.setItem(KEY_NAME, value);
+        loadConfig();
+      }
+    };
+    return;
+  }
+
+  const values = config.modules[currentPage] || {};
+
+  content.innerHTML = `
+    <div class="card">
+      <h2>${escapeHTML(currentPage)}</h2>
+      <p class="muted">
+        Configure this module. Saving stores its configuration;
+        the corresponding bot event handler or worker must also be implemented
+        for actions to run in Discord.
+      </p>
+
+      <form id="moduleForm">
+        <div class="field">
+          <label>Enable module configuration</label>
+          <select id="moduleEnabled">
+            <option value="false" ${values.enabled ? "" : "selected"}>Disabled</option>
+            <option value="true" ${values.enabled ? "selected" : ""}>Enabled</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Channel ID (optional)</label>
+          <input id="channelId" value="${escapeHTML(values.channelId || "")}"
+                 placeholder="Discord channel ID">
+        </div>
+
+        <div class="field">
+          <label>Role IDs (optional)</label>
+          <input id="roleIds" value="${escapeHTML(values.roleIds || "")}"
+                 placeholder="Role IDs separated by commas">
+        </div>
+
+        <div class="field">
+          <label>Message / settings / notes</label>
+          <textarea id="moduleNotes">${escapeHTML(values.notes || values.message || "")}</textarea>
+        </div>
+
+        <div class="form-actions">
+          <button class="primary" type="submit">Save ${escapeHTML(currentPage)}</button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  $("#moduleForm").onsubmit = async event => {
+    event.preventDefault();
+
+    const modules = {
+      ...config.modules,
+      [currentPage]: {
+        enabled: $("#moduleEnabled").value === "true",
+        channelId: $("#channelId").value.trim(),
+        roleIds: $("#roleIds").value.trim(),
+        notes: $("#moduleNotes").value
+      }
+    };
+
+    await saveConfig({ modules });
+  };
+}
+
+function attachStatusEvents() {
+  const form = $("#statusForm");
+
+  form.onsubmit = async event => {
+    event.preventDefault();
+
+    try {
+      const result = await request("/api/status", {
+        method: "POST",
+        body: JSON.stringify({
+          presence: $("#presence").value,
+          activityType: $("#activityType").value,
+          activityText: $("#activityText").value.trim(),
+          bioNote: $("#bioNote").value,
+          pronounsNote: $("#pronounsNote").value
+        })
+      });
+
+      config = { ...config, ...(result.config || {}) };
+      runtime = result.status || runtime;
+      updateConnection();
+      notify("Bot presence updated.");
+      renderPage();
+    } catch (error) {
+      notify(error.message, true);
+    }
+  };
+
+  $("#saveNotes").onclick = () => saveConfig({
+    bioNote: $("#bioNote").value,
+    pronounsNote: $("#pronounsNote").value
+  });
+}
+
+$("#menuButton").onclick = () => $("#sidebar").classList.toggle("open");
+$("#refreshButton").onclick = loadConfig;
+
+renderNavigation();
+loadConfig();
+setInterval(loadConfig, 30000);
