@@ -1,55 +1,141 @@
-
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#06110a">
-<title>VEYRON Control</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#06100a">
+
+  <title>VEYRON Control</title>
+
+  <!-- Load the stylesheet from the same frontend folder -->
+  <link rel="stylesheet" href="./style.css?v=2">
 </head>
+
 <body>
-<div class="app">
-<aside class="sidebar" id="sidebar">
-<div class="brand"><div class="logo">V</div><div><strong>VEYRON</strong><small>CONTROL CENTER</small></div></div>
-<div class="navlabel">Workspace</div>
-<nav class="nav" id="nav">
-<button class="active" data-page="overview"><span class="ico">◈</span>Overview</button>
-<button data-page="commands"><span class="ico">⌘</span>Slash Commands</button>
-<button data-page="automations"><span class="ico">⚡</span>Automations</button>
-<button data-page="modules"><span class="ico">▦</span>Module Library</button>
-<div class="navlabel">Server tools</div>
-<button data-page="moderation"><span class="ico">🛡</span>Moderation</button>
-<button data-page="welcome"><span class="ico">✦</span>Welcome &amp; Roles</button>
-<button data-page="tickets"><span class="ico">▤</span>Tickets</button>
-<button data-page="leveling"><span class="ico">↗</span>Leveling &amp; Economy</button>
-<button data-page="logs"><span class="ico">≋</span>Logs &amp; Analytics</button>
-<div class="navlabel">Account</div>
-<button data-page="premium"><span class="ico">✧</span>Premium</button>
-<button data-page="settings"><span class="ico">⚙</span>Settings</button>
-</nav>
-<div class="sidebar-bottom">
-<div class="status"><span class="dot"></span><span id="botState">Checking API</span></div>
-<p>VEYRON Control</p>
-<p>Mobile-first bot management</p>
-</div>
-</aside>
-<main class="main">
-<header class="topbar">
-<div style="display:flex;align-items:center;gap:10px">
-<button class="ghostbtn mobilemenu" id="menuBtn" aria-label="Open navigation">☰</button>
-<div class="crumb">VEYRON / <strong id="crumb">Overview</strong></div>
-</div>
-<div class="topactions">
-<select class="server-select" id="serverSelect" aria-label="Select Discord server"><option value="">Loading servers…</option></select>
-<button class="ghostbtn" id="connectBtn">Connect Discord</button>
-<div class="userchip" id="userChip" hidden><div class="avatar" id="avatar">V</div><span id="username">Account</span></div>
-</div>
-</header>
-<section class="content" id="content"></section>
-</main>
-</div>
-<div class="toast" id="toast" role="status"></div>
-<script src="app.js"></script>
+  <div class="app">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="logo">V</div>
+        <div>
+          <strong>VEYRON</strong>
+          <small>CONTROL CENTER</small>
+        </div>
+      </div>
+
+      <div class="navlabel">Workspace</div>
+
+      <nav class="nav" id="nav">
+        <button class="active" data-page="overview">
+          <span class="ico">◈</span>Overview
+        </button>
+
+        <button data-page="commands">
+          <span class="ico">⌘</span>Slash Commands
+        </button>
+
+        <button data-page="automations">
+          <span class="ico">⚡</span>Automations
+        </button>
+
+        <button data-page="modules">
+          <span class="ico">▦</span>Module Library
+        </button>
+
+        <div class="navlabel">Server tools</div>
+
+        <button data-page="moderation">
+          <span class="ico">🛡</span>Moderation
+        </button>
+
+        <button data-page="welcome">
+          <span class="ico">✦</span>Welcome &amp; Roles
+        </button>
+
+        <button data-page="tickets">
+          <span class="ico">▤</span>Tickets
+        </button>
+
+        <button data-page="leveling">
+          <span class="ico">↗</span>Leveling &amp; Economy
+        </button>
+
+        <button data-page="logs">
+          <span class="ico">≋</span>Logs &amp; Analytics
+        </button>
+
+        <div class="navlabel">Account</div>
+
+        <button data-page="premium">
+          <span class="ico">✧</span>Premium
+        </button>
+
+        <button data-page="settings">
+          <span class="ico">⚙</span>Settings
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="status">
+          <span class="dot"></span>
+          <span id="botState">Checking API</span>
+        </div>
+
+        <p>VEYRON Control</p>
+        <p>Mobile-first bot management</p>
+      </div>
+    </aside>
+
+    <!-- Main dashboard -->
+    <main class="main">
+
+      <header class="topbar">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button
+            class="ghostbtn mobilemenu"
+            id="menuBtn"
+            aria-label="Open navigation"
+            type="button"
+          >☰</button>
+
+          <div class="crumb">
+            VEYRON / <strong id="crumb">Overview</strong>
+          </div>
+        </div>
+
+        <div class="topactions">
+          <select
+            class="server-select"
+            id="serverSelect"
+            aria-label="Select Discord server"
+          >
+            <option value="">Loading servers…</option>
+          </select>
+
+          <button
+            class="ghostbtn"
+            id="connectBtn"
+            type="button"
+          >Connect Discord</button>
+
+          <div class="userchip" id="userChip" hidden>
+            <div class="avatar" id="avatar">V</div>
+            <span id="username">Account</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- JavaScript renders dashboard content here -->
+      <section class="content" id="content"></section>
+
+    </main>
+  </div>
+
+  <!-- Notifications -->
+  <div class="toast" id="toast" role="status"></div>
+
+  <!-- Dashboard functionality -->
+  <script src="./app.js"></script>
 </body>
 </html>
