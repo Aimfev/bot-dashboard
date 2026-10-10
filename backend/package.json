@@ -2,16 +2,11 @@
 {
   "name": "veyron-control",
   "version": "1.0.0",
-  "private": true,
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
-  "engines": {
-    "node": ">=20"
-  },
   "dependencies": {
-    "@google/genai": "latest",
     "cors": "^2.8.5",
     "discord.js": "^14.19.3",
     "dotenv": "^16.4.7",
