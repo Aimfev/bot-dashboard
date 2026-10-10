@@ -1,13 +1,12 @@
 require("dotenv").config();
 const express=require("express"),cors=require("cors"),crypto=require("crypto");
-const{GoogleGenAI}=require("@google/genai");
 const{Client,GatewayIntentBits,ActivityType,SlashCommandBuilder,REST,Routes,PermissionFlagsBits,EmbedBuilder,ChannelType}=require("discord.js");
 const{Pool}=require("pg");
 const app=express();
 app.disable("x-powered-by");
 app.use(express.json({limit:"1mb"}));
 const PORT=process.env.PORT||3000,BOT_TOKEN=process.env.BOT_TOKEN,API_KEY=process.env.DASHBOARD_API_KEY,DATABASE_URL=process.env.DATABASE_URL;
-const genAI=process.env.GEMINI_API_KEY?new GoogleGenAI({apiKey:process.env.GEMINI_API_KEY}):null;
+const OLLAMA_API_KEY=process.env.OLLAMA_API_KEY,OLLAMA_MODEL=process.env.OLLAMA_MODEL||"gemma4:31b";
 const origins=(process.env.FRONTEND_ORIGINS||"https://dashboard.pntr.dev").split(",").map(v=>v.trim());
 app.use(cors({origin(origin,cb){if(!origin||origins.includes(origin))return cb(null,true);cb(new Error("Origin not allowed"));},allowedHeaders:["Content-Type","x-dashboard-key"],methods:["GET","PUT","POST","OPTIONS"]}));
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:{rejectUnauthorized:false}}):null;
@@ -23,11 +22,11 @@ next();
 }
 function statusData(){
 const ping=client.ws?.ping;
-return{bot:{ready:botReady&&Boolean(client.user),username:client.user?.username||null,guilds:client.guilds.cache.size,ping:Number.isFinite(ping)&&ping>=0?ping:null},database:{connected:dbReady},ai:{configured:Boolean(genAI)}};
+return{bot:{ready:botReady&&Boolean(client.user),username:client.user?.username||null,guilds:client.guilds.cache.size,ping:Number.isFinite(ping)&&ping>=0?ping:null},database:{connected:dbReady},ai:{provider:"Ollama Cloud",model:OLLAMA_MODEL,configured:Boolean(OLLAMA_API_KEY)}};
 }
 async function initializeDatabase(){
 if(!pool){console.warn("DATABASE_URL missing; configuration will be memory-only.");return;}
-await pool.query("CREATE TABLE IF NOT EXISTS veyron_config (config_key TEXT PRIMARY KEY,config_value JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
+await pool.query("CREATE TABLE IF NOT EXISTS veyron_config(config_key TEXT PRIMARY KEY,config_value JSONB NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())");
 const r=await pool.query("SELECT config_value FROM veyron_config WHERE config_key=$1",["main"]);
 if(r.rows[0]){config={...config,...r.rows[0].config_value};config.modules=config.modules||{};}
 else await pool.query("INSERT INTO veyron_config(config_key,config_value) VALUES($1,$2::jsonb)",["main",JSON.stringify(config)]);
@@ -65,7 +64,6 @@ client.user.setPresence({status:p.presence,activities:p.activityText?[{name:p.ac
 await saveConfig(p);res.json({ok:true,config,status:statusData()});
 }catch(e){console.error("Presence update:",e);res.status(500).json({error:"Failed to update presence."});}
 });
-
 const P=PermissionFlagsBits;
 const commands=[
 new SlashCommandBuilder().setName("say").setDescription("Make VEYRON send a message").addStringOption(o=>o.setName("message").setDescription("Message to send").setRequired(true)),
@@ -85,73 +83,50 @@ new SlashCommandBuilder().setName("unlock").setDescription("Unlock a text channe
 new SlashCommandBuilder().setName("8ball").setDescription("Ask the magic 8-ball").addStringOption(o=>o.setName("question").setDescription("Your question").setRequired(true)),
 new SlashCommandBuilder().setName("poll").setDescription("Create a reaction poll").addStringOption(o=>o.setName("question").setDescription("Poll question").setRequired(true)).addStringOption(o=>o.setName("option1").setDescription("First option").setRequired(true)).addStringOption(o=>o.setName("option2").setDescription("Second option").setRequired(true)).addStringOption(o=>o.setName("option3").setDescription("Third option (optional)")).addStringOption(o=>o.setName("option4").setDescription("Fourth option (optional)"))
 ].map(c=>c.toJSON());
-
 async function registerCommands(){
 if(!client.user)return;
 const rest=new REST({version:"10"}).setToken(BOT_TOKEN),guildId=process.env.DISCORD_GUILD_ID;
-const route=guildId?Routes.applicationGuildCommands(client.user.id,guildId):Routes.applicationCommands(client.user.id);
-await rest.put(route,{body:commands});
+await rest.put(guildId?Routes.applicationGuildCommands(client.user.id,guildId):Routes.applicationCommands(client.user.id),{body:commands});
 console.log(`Registered ${commands.length} slash commands ${guildId?"for guild "+guildId:"globally"}.`);
 }
 function can(i,permission){
 if(!i.memberPermissions?.has(permission)){i.reply({content:"❌ You don't have permission to use this command.",ephemeral:true}).catch(()=>{});return false;}
 return true;
 }
-async function getMember(i,user){return i.guild.members.fetch(user.id).catch(()=>null);}
-
-/* FAST GEMINI HANDLER */
+async function getMember(i,user){return i.guild?.members.fetch(user.id).catch(()=>null)||null;}
 const aiCooldown=new Map(),aiBusy=new Set();
 client.on("messageCreate",async m=>{
-if(m.author.bot||!m.guild||!genAI||!client.user)return;
+if(m.author.bot||!m.guild||!OLLAMA_API_KEY||!client.user)return;
 const content=m.content.trim();
-if(!content||content.length>2000)return;
-if(!m.mentions.has(client.user)&&!content.toLowerCase().startsWith("veyron,"))return;
+if(!content||content.length>2000||(!m.mentions.has(client.user)&&!content.toLowerCase().startsWith("veyron,")))return;
 if(aiBusy.has(m.author.id))return;
 const now=Date.now();
 if(now-(aiCooldown.get(m.author.id)||0)<3000)return;
-aiCooldown.set(m.author.id,now);
-aiBusy.add(m.author.id);
+aiCooldown.set(m.author.id,now);aiBusy.add(m.author.id);
 let reply;
 try{
 const prompt=content.replace(new RegExp(`<@!?${client.user.id}>`,"g"),"").replace(/^veyron,\s*/i,"").trim();
 if(!prompt)return;
 reply=await m.reply({content:"💭 Thinking...",allowedMentions:{repliedUser:false}});
-const controller=new AbortController();
-const timer=setTimeout(()=>controller.abort(),8000);
+const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
 try{
-const response=await Promise.race([
-genAI.models.generateContent({
-model:process.env.GEMINI_MODEL||"gemini-3.8-flash",
-contents:prompt,
-config:{
-systemInstruction:"You are VEYRON, a fast and friendly Discord AI assistant. Reply briefly and directly. Never claim to perform actions you have not performed.",
-maxOutputTokens:200
-}
-}),
-new Promise((_,reject)=>controller.signal.addEventListener("abort",()=>reject(new Error("Gemini timed out after 8 seconds")),{once:true}))
-]);
-clearTimeout(timer);
-const answer=response.text?.trim();
-await reply.edit({content:answer?answer.slice(0,2000):"I couldn't generate a response. Please try again.",allowedMentions:{repliedUser:false}});
+const response=await fetch("https://ollama.com/api/chat",{method:"POST",headers:{"Authorization":`Bearer ${OLLAMA_API_KEY}`,"Content-Type":"application/json"},body:JSON.stringify({model:OLLAMA_MODEL,stream:false,messages:[{role:"system",content:"You are VEYRON, a fast and friendly Discord AI assistant. Reply briefly and directly. Never claim to perform actions you have not performed."},{role:"user",content:prompt}],options:{temperature:0.7,num_predict:220}}),signal:controller.signal});
+if(!response.ok){const detail=await response.text().catch(()=>"");throw new Error(`Ollama HTTP ${response.status}: ${detail.slice(0,250)}`);}
+const data=await response.json(),answer=data.message?.content?.trim();
+if(!answer)throw new Error("Ollama returned an empty response.");
+await reply.edit({content:answer.slice(0,2000),allowedMentions:{parse:[],repliedUser:false}});
 }catch(e){
-clearTimeout(timer);
-console.error("Gemini reply failed:",e?.message||e);
-const err=String(e?.message||"");
-const message=/503|UNAVAILABLE|overload|429|RESOURCE_EXHAUSTED/i.test(err)
-?"⚡ Gemini is busy right now. Please try again shortly."
-:/timed out|aborted/i.test(err)
-?"⏱️ Gemini took too long to respond. Please try again."
-:"⚠️ The AI service failed. Please try again shortly.";
-if(reply)await reply.edit({content:message}).catch(()=>{});
-else await m.reply({content:message,allowedMentions:{repliedUser:false}}).catch(()=>{});
-}
+const err=String(e?.message||e);
+console.error("Ollama reply failed:",err);
+const message=e.name==="AbortError"?"⏱️ Ollama took too long to respond. Please try again.":/401|403/i.test(err)?"🔑 Ollama API key rejected. Check OLLAMA_API_KEY in Render.":/404/i.test(err)?"⚠️ Ollama model not found. Check OLLAMA_MODEL in Render.":/429|503|overload/i.test(err)?"⚡ Ollama is busy right now. Please try again shortly.":"⚠️ The AI service failed. Please try again shortly.";
+if(reply)await reply.edit({content:message,allowedMentions:{parse:[]}}).catch(()=>{});
+else await m.reply({content:message,allowedMentions:{parse:[],repliedUser:false}}).catch(()=>{});
+}finally{clearTimeout(timer);}
 }catch(e){
 console.error("AI handler error:",e?.message||e);
-if(reply)await reply.edit({content:"⚠️ Something went wrong while replying."}).catch(()=>{});
-}catchOuterDummy{}
-finally{aiBusy.delete(m.author.id);}
+if(reply)await reply.edit({content:"⚠️ Something went wrong while replying.",allowedMentions:{parse:[]}}).catch(()=>{});
+}finally{aiBusy.delete(m.author.id);}
 });
-
 client.on("interactionCreate",async i=>{
 if(!i.isChatInputCommand())return;
 try{
@@ -247,7 +222,6 @@ if(i.deferred||i.replied)await i.followUp(msg).catch(()=>{});
 else await i.reply(msg).catch(()=>{});
 }
 });
-
 client.once("ready",async()=>{
 botReady=true;
 console.log(`Connected as ${client.user.tag}`);
@@ -258,7 +232,6 @@ try{await registerCommands();}catch(e){console.error("Slash command registration
 client.on("error",e=>console.error("Discord client error:",e));
 client.on("shardDisconnect",()=>{botReady=false;});
 client.on("shardReady",()=>{botReady=true;});
-
 async function start(){
 try{await initializeDatabase();}catch(e){dbReady=false;console.error("Database connection failed:",e.message);}
 if(!BOT_TOKEN)console.error("BOT_TOKEN is missing from Render.");
