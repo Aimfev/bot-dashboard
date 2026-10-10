@@ -1,3 +1,4 @@
+
 {
   "name": "veyron-control",
   "version": "1.0.0",
@@ -10,11 +11,11 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@google/genai": "latest",
     "cors": "^2.8.5",
     "discord.js": "^14.19.3",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "openai": "^5.0.0",
     "pg": "^8.13.1"
   }
 }
